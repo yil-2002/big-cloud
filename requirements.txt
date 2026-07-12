@@ -1,3 +1,4 @@
 aiogram==2.23.1
 asyncpg
 aiohttp
+cachetools==5.3.2
