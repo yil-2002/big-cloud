@@ -24,7 +24,7 @@ telethon==1.41.0                # Katta media oqim qilish uchun MTProto klient
 SQLAlchemy[asyncio]>=2.0.52     # 2.0 stilidagi async ORM (Mapped/mapped_column)
 asyncpg>=0.30.0                 # PostgreSQL async drayveri (production)
 aiosqlite>=0.21.0               # SQLite async drayveri (dev/test)
-alembic>=1.16.5                 # sxema migratsiyalari (scripts/migrate.py bilan birga)
+alembic>=1.20.1                 # sxema migratsiyalari (scripts/migrate.py bilan birga)
 
 # --- Cache / rate limiting -------------------------------------------------
 redis[hiredis]>=8.1.0           # async Redis klient (kesh + limit + sessiya)
