@@ -2,62 +2,99 @@
 # ===========================================================================
 # hugecloud — GitHub Actions runner'ida botni ishga tushirish (VPS'siz rejim)
 #
-# Oqim:
-#   1. ilova (bot polling + API + Mini App) 127.0.0.1:8000 da fon rejimida;
-#   2. /healthz tayyor bo'lgach Cloudflare tunnel ochiladi;
-#   3. tunnel manzili Cloudflare Worker'ga yoziladi (doimiy PUBLIC_URL);
-#   4. har 60 s tekshiruv: tunnel o'lsa — qayta ochiladi, ilova o'lsa — qayta
-#      ishga tushiriladi;
-#   5. RUN_SECONDS tugagach keyingi workflow run navbatga qo'yiladi va ilova
-#      SIGINT bilan toza yopiladi (concurrency guruhi tufayli yangi run faqat
-#      shu run tugagach boshlanadi — 409 Conflict bo'lmaydi).
+# Minimal sozlama: faqat BOT_TOKEN + ARCHIVE_CHANNEL_ID (+ ADMIN_ID).
 #
-# Kerakli env: BOT_TOKEN, DATABASE_URL, PUBLIC_URL, ORIGIN_SECRET
-# Ixtiyoriy:   CF_TUNNEL_TOKEN (o'z domeningizdagi named tunnel), RUN_SECONDS
+# BAZA:
+#   * DATABASE_URL berilmagan -> SQLite, nusxasi yopiq kanalda (pin qilingan
+#     xabar). Ishga tushishda tiklanadi, har DB_SYNC_SECONDS da va to'xtashda
+#     kanalga yuboriladi (scripts/tg_db_sync.py).
+#   * DATABASE_URL berilgan (Neon/Supabase Postgres) -> to'g'ridan-to'g'ri.
+#
+# MANZIL (Mini App):
+#   * PUBLIC_URL + ORIGIN_SECRET -> doimiy Cloudflare Worker manzili;
+#   * CF_TUNNEL_TOKEN + PUBLIC_URL -> o'z domeningizdagi named tunnel;
+#   * hech biri yo'q -> trycloudflare manzili to'g'ridan-to'g'ri ishlatiladi
+#     (har ~6 soatda o'zgaradi, bot menyu tugmasini o'zi yangilaydi).
+#
+# RUN_SECONDS tugagach keyingi run navbatga qo'yiladi va ilova toza yopiladi
+# (concurrency guruhi tufayli bir vaqtda faqat bitta bot ishlaydi).
 # ===========================================================================
 set -uo pipefail
 
 PORT="${PORT:-8000}"
-RUN_SECONDS="${RUN_SECONDS:-20700}"   # 5 soat 45 daqiqa (job limiti 6 soat)
+RUN_SECONDS="${RUN_SECONDS:-20700}"          # 5 soat 45 daqiqa (job limiti 6 soat)
+DB_SYNC_SECONDS="${DB_SYNC_SECONDS:-300}"    # kanalga zaxira oralig'i
+DB_FILE="data/hugecloud.sqlite3"
 APP_LOG="${RUNNER_TEMP:-/tmp}/hugecloud-app.log"
 CF_LOG="${RUNNER_TEMP:-/tmp}/cloudflared.log"
 APP_PID=""
 CF_PID=""
 ORIGIN=""
+PUBLIC_URL="${PUBLIC_URL:-}"
+PUBLIC_URL="${PUBLIC_URL%/}"
 
 log() { echo "[$(date -u +%H:%M:%S)] $*"; }
 die() { echo "::error::$*"; exit 1; }
 
-# --- 0. Tekshiruvlar ---------------------------------------------------------
-[ -n "${BOT_TOKEN:-}" ] || die "BOT_TOKEN secret berilmagan"
-[ -n "${DATABASE_URL:-}" ] || die "DATABASE_URL secret berilmagan (Neon/Supabase Postgres kerak — runner diski har safar o'chadi)"
-case "$DATABASE_URL" in
-  sqlite*) die "DATABASE_URL SQLite bo'lmasligi kerak: runner har 6 soatda yangilanadi va ma'lumot yo'qoladi" ;;
-esac
-[ -n "${PUBLIC_URL:-}" ] || die "PUBLIC_URL berilmagan (masalan https://hugecloud.<siz>.workers.dev)"
-if [ -z "${CF_TUNNEL_TOKEN:-}" ] && [ -z "${ORIGIN_SECRET:-}" ]; then
-  die "ORIGIN_SECRET berilmagan (Worker'ga tunnel manzilini yozish uchun)"
-fi
-PUBLIC_URL="${PUBLIC_URL%/}"
+# --- 0. Tekshiruvlar va rejimlar --------------------------------------------
+[ -n "${BOT_TOKEN:-}" ] || die "BOT_TOKEN secret topilmadi. Settings -> Secrets and variables -> Actions -> Repository secrets ga qo'shing (Environment secrets emas)."
 
 # Bo'sh secret'lar "" bo'lib keladi — pydantic int maydonlarda yiqilmasin.
 for var in ADMIN_ID ADMIN_IDS ADMIN_PASSWORD ARCHIVE_CHANNEL_ID TELEGRAM_API_ID \
-           TELEGRAM_API_HASH JWT_SECRET BOT_USERNAME BOT_PASSWORD; do
+           TELEGRAM_API_HASH JWT_SECRET BOT_USERNAME BOT_PASSWORD DATABASE_URL \
+           ORIGIN_SECRET CF_TUNNEL_TOKEN; do
   if [ -z "${!var:-}" ]; then unset "$var"; fi
 done
+
+if [ -n "${DATABASE_URL:-}" ]; then
+  case "$DATABASE_URL" in
+    sqlite*) die "DATABASE_URL SQLite bo'lmasligi kerak (runner diski o'chadi). Uni o'chirib qo'ying — baza kanalda saqlanadi." ;;
+  esac
+  DB_MODE="postgres"
+else
+  [ -n "${ARCHIVE_CHANNEL_ID:-}" ] || die "ARCHIVE_CHANNEL_ID secret kerak: baza yopiq kanalda saqlanadi (bot kanalda admin bo'lsin)."
+  DB_MODE="telegram"
+  export DATABASE_URL="sqlite+aiosqlite:///./$DB_FILE"
+fi
+
+if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
+  [ -n "$PUBLIC_URL" ] || die "CF_TUNNEL_TOKEN bilan PUBLIC_URL (o'z domeningiz) ham kerak"
+  URL_MODE="named"
+elif [ -n "$PUBLIC_URL" ] && [ -n "${ORIGIN_SECRET:-}" ]; then
+  URL_MODE="worker"
+else
+  URL_MODE="direct"
+fi
+log "Rejim: baza=$DB_MODE, manzil=$URL_MODE"
+
 if [ -n "${TELEGRAM_API_ID:-}" ] && [ -n "${TELEGRAM_API_HASH:-}" ]; then
   export MT_MEDIA_ENABLED=true
 else
   export MT_MEDIA_ENABLED=false
 fi
-
 export PORT API_PORT="$PORT" API_HOST=127.0.0.1
-export BASE_URL="$PUBLIC_URL"
-export WEB_APP_URL="$PUBLIC_URL/index.html"
-export CORS_ORIGINS="${CORS_ORIGINS:-$PUBLIC_URL}"
 mkdir -p data
 
-# --- 1. Ilova ----------------------------------------------------------------
+# --- 1. Baza ------------------------------------------------------------------
+db_backup() {
+  [ "$DB_MODE" = "telegram" ] || return 0
+  python scripts/tg_db_sync.py backup "$DB_FILE" \
+    || echo "::warning::Bazani kanalga yuborib bo'lmadi (keyingi urinishda qaytariladi)"
+}
+
+if [ "$DB_MODE" = "telegram" ]; then
+  python scripts/tg_db_sync.py restore "$DB_FILE" \
+    || die "Bazani kanaldan tiklab bo'lmadi — ma'lumot yo'qolmasligi uchun bot ishga tushirilmadi"
+fi
+
+# --- 2. Ilova -----------------------------------------------------------------
+export_urls() {
+  local url="$1"
+  export BASE_URL="$url"
+  export WEB_APP_URL="$url/index.html"
+  export CORS_ORIGINS="${CORS_ORIGINS_OVERRIDE:-$url}"
+}
+
 start_app() {
   log "Ilova ishga tushmoqda…"
   python main.py --mode all >>"$APP_LOG" 2>&1 &
@@ -77,11 +114,19 @@ start_app() {
   die "Ilova 90 s ichida /healthz ga javob bermadi"
 }
 
-# --- 2. Tunnel ---------------------------------------------------------------
+stop_app() {
+  if [ -n "$APP_PID" ] && kill -0 "$APP_PID" 2>/dev/null; then
+    kill -INT "$APP_PID" 2>/dev/null
+    for _ in $(seq 1 25); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 1; done
+    kill -9 "$APP_PID" 2>/dev/null || true
+  fi
+  APP_PID=""
+}
+
+# --- 3. Tunnel ----------------------------------------------------------------
 start_tunnel() {
   : >"$CF_LOG"
-  if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
-    # Named tunnel: manzil doimiy (PUBLIC_URL = o'z domeningiz), Worker shart emas.
+  if [ "$URL_MODE" = "named" ]; then
     cloudflared tunnel --no-autoupdate run --token "$CF_TUNNEL_TOKEN" >>"$CF_LOG" 2>&1 &
     CF_PID=$!
     ORIGIN="$PUBLIC_URL"
@@ -97,17 +142,20 @@ start_tunnel() {
     sleep 1
   done
   [ -n "$ORIGIN" ] || { tail -n 30 "$CF_LOG"; return 1; }
-  echo "::add-mask::$ORIGIN"
-  # DNS tarqalishini kutish.
+  [ "$URL_MODE" = "worker" ] && echo "::add-mask::$ORIGIN"
+  log "Tunnel ochildi${URL_MODE:+ ($URL_MODE)}"
+}
+
+wait_tunnel_ready() {
   for _ in $(seq 1 30); do
-    curl -fsS --max-time 5 "$ORIGIN/healthz" >/dev/null 2>&1 && break
+    curl -fsS --max-time 5 "$ORIGIN/healthz" >/dev/null 2>&1 && return 0
     sleep 2
   done
-  log "Tunnel ochildi"
+  return 1
 }
 
 register_origin() {
-  [ -n "${CF_TUNNEL_TOKEN:-}" ] && return 0
+  [ "$URL_MODE" = "worker" ] || return 0
   local payload="$1"
   for attempt in 1 2 3 4 5; do
     if curl -fsS --max-time 15 -X POST "$PUBLIC_URL/__hc/origin" \
@@ -127,20 +175,24 @@ register_origin() {
 restart_tunnel() {
   [ -n "$CF_PID" ] && kill "$CF_PID" 2>/dev/null
   wait "$CF_PID" 2>/dev/null
-  if start_tunnel; then
-    register_origin "{\"origin\":\"$ORIGIN\"}"
+  start_tunnel || return 1
+  if [ "$URL_MODE" = "direct" ]; then
+    # Manzil o'zgardi: ilova yangi BASE_URL bilan qayta ishga tushadi va
+    # Telegram menyu tugmasini yangi manzilga o'rnatadi.
+    export_urls "$ORIGIN"
+    stop_app
+    start_app
   fi
+  wait_tunnel_ready || true
+  register_origin "{\"origin\":\"$ORIGIN\"}"
 }
 
-# --- 3. To'xtatish -----------------------------------------------------------
+# --- 4. To'xtatish ------------------------------------------------------------
 shutdown() {
   log "To'xtatilmoqda…"
   register_origin '{"origin":null}' || true
-  if [ -n "$APP_PID" ] && kill -0 "$APP_PID" 2>/dev/null; then
-    kill -INT "$APP_PID" 2>/dev/null
-    for _ in $(seq 1 25); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 1; done
-    kill -9 "$APP_PID" 2>/dev/null || true
-  fi
+  stop_app
+  db_backup            # ilova to'xtagach — eng so'nggi holat kanalga
   [ -n "$CF_PID" ] && kill "$CF_PID" 2>/dev/null || true
 }
 trap 'shutdown; exit 0' INT TERM
@@ -154,12 +206,24 @@ queue_next_run() {
   fi
 }
 
-# --- 4. Asosiy sikl ----------------------------------------------------------
-start_app
-start_tunnel || die "Cloudflare tunnel ochilmadi"
-register_origin "{\"origin\":\"$ORIGIN\"}"
+# --- 5. Asosiy oqim -----------------------------------------------------------
+if [ "$URL_MODE" = "direct" ]; then
+  # Manzil oldindan kerak (BASE_URL / menyu tugmasi) — avval tunnel.
+  start_tunnel || die "Cloudflare tunnel ochilmadi"
+  export_urls "$ORIGIN"
+  start_app
+  wait_tunnel_ready || echo "::warning::Tunnel hali javob bermayapti (DNS tarqalmoqda)"
+  log "Mini App manzili: $ORIGIN/index.html"
+else
+  export_urls "$PUBLIC_URL"
+  start_app
+  start_tunnel || die "Cloudflare tunnel ochilmadi"
+  wait_tunnel_ready || true
+  register_origin "{\"origin\":\"$ORIGIN\"}"
+fi
 
 deadline=$(( $(date +%s) + RUN_SECONDS ))
+next_sync=$(( $(date +%s) + DB_SYNC_SECONDS ))
 tunnel_fails=0
 app_restarts=0
 log "Bot ishlayapti. Tugash vaqti: $(date -u -d "@$deadline" +%H:%M) UTC"
@@ -170,9 +234,17 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   if ! kill -0 "$APP_PID" 2>/dev/null; then
     app_restarts=$((app_restarts + 1))
     tail -n 40 "$APP_LOG"
-    [ "$app_restarts" -le 5 ] || die "Ilova 5 martadan ko'p yiqildi"
+    if [ "$app_restarts" -gt 5 ]; then
+      db_backup
+      die "Ilova 5 martadan ko'p yiqildi"
+    fi
     echo "::warning::Ilova yiqildi, qayta ishga tushirilmoqda ($app_restarts)"
     start_app
+  fi
+  # Davriy zaxira (faqat o'zgarish bo'lsa yuboriladi).
+  if [ "$(date +%s)" -ge "$next_sync" ]; then
+    db_backup
+    next_sync=$(( $(date +%s) + DB_SYNC_SECONDS ))
   fi
   # Tunnel sog'ligini tashqaridan tekshirish.
   if curl -fsS --max-time 10 "$ORIGIN/healthz" >/dev/null 2>&1; then
@@ -188,6 +260,6 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
 done
 
 log "Vaqt tugadi — navbatdagi runga topshirilmoqda"
-queue_next_run
 shutdown
+queue_next_run
 log "Yakunlandi"

@@ -75,6 +75,10 @@ def test_github_workflow_is_valid() -> None:
     assert job["env"]["BOT_DROP_PENDING_UPDATES"] == "false"
     assert any(step.get("run") == "bash scripts/gha_run.sh" for step in job["steps"])
     assert (ROOT / "scripts" / "gha_run.sh").exists()
+    # Minimal rejim: baza yopiq kanalda, Postgres ixtiyoriy.
+    assert "ARCHIVE_CHANNEL_ID" in job["env"]
+    runner = (ROOT / "scripts" / "gha_run.sh").read_text(encoding="utf-8")
+    assert "tg_db_sync.py restore" in runner and "tg_db_sync.py backup" in runner
 
 
 def test_worker_config_is_consistent() -> None:

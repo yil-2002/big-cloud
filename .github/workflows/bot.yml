@@ -5,6 +5,8 @@
 # keyingi runni o'zi navbatga qo'yadi. `concurrency` tufayli bir vaqtda faqat
 # bitta bot ishlaydi; soatlik cron esa run yiqilsa ham botni qayta tiklaydi.
 #
+# Minimal sozlama (Repository secrets): BOT_TOKEN, ARCHIVE_CHANNEL_ID, ADMIN_ID.
+# Baza yopiq kanalda saqlanadi; Cloudflare Worker va Postgres — ixtiyoriy.
 # Sozlash: DEPLOY_GITHUB_CLOUDFLARE.md
 # ===========================================================================
 name: bot
@@ -27,19 +29,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 358
     env:
-      # --- Maxfiy qiymatlar (Settings -> Secrets and variables -> Actions) ---
+      # --- Majburiy (Settings -> Secrets and variables -> Actions -> Repository secrets)
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      ORIGIN_SECRET: ${{ secrets.ORIGIN_SECRET }}
+      ARCHIVE_CHANNEL_ID: ${{ secrets.ARCHIVE_CHANNEL_ID }}   # fayllar + baza nusxasi shu kanalda
       ADMIN_ID: ${{ secrets.ADMIN_ID }}
+      # --- Ixtiyoriy ---------------------------------------------------------
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}       # bo'sh = baza kanalda (SQLite nusxasi)
+      ORIGIN_SECRET: ${{ secrets.ORIGIN_SECRET }}     # Cloudflare Worker (doimiy manzil)
       ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-      ARCHIVE_CHANNEL_ID: ${{ secrets.ARCHIVE_CHANNEL_ID }}
       TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
       TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
       CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
       # --- Oddiy qiymatlar (Variables bo'limi) --------------------------------
-      PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+      PUBLIC_URL: ${{ vars.PUBLIC_URL }}               # bo'sh = trycloudflare manzili to'g'ridan-to'g'ri
+      DB_SYNC_SECONDS: ${{ vars.DB_SYNC_SECONDS || '300' }}
       BOT_USERNAME: ${{ vars.BOT_USERNAME }}
       LOG_LEVEL: ${{ vars.LOG_LEVEL || 'WARNING' }}   # ommaviy repo: loglar hammaga ko'rinadi
       RUN_SECONDS: ${{ vars.RUN_SECONDS || '20700' }}

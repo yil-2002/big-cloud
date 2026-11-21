@@ -34,7 +34,10 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ORIGIN_SECRET: ${{ secrets.ORIGIN_SECRET }}
         run: |
-          [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "::error::CLOUDFLARE_API_TOKEN secret yo'q"; exit 1; }
-          [ -n "$ORIGIN_SECRET" ] || { echo "::error::ORIGIN_SECRET secret yo'q"; exit 1; }
+          # Cloudflare ixtiyoriy: sozlanmagan bo'lsa bot trycloudflare manzili bilan ishlaydi.
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$ORIGIN_SECRET" ]; then
+            echo "::notice::Cloudflare secret'lari yo'q — Worker deploy o'tkazib yuborildi (ixtiyoriy)."
+            exit 0
+          fi
           npx --yes wrangler@4 deploy
           printf '%s' "$ORIGIN_SECRET" | npx --yes wrangler@4 secret put ORIGIN_SECRET
