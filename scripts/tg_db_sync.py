@@ -15,6 +15,11 @@ Buyruqlar::
 Env: ``BOT_TOKEN``, ``ARCHIVE_CHANNEL_ID`` (bot kanalda admin: xabar yuborish,
 tahrirlash va pin qilish huquqlari bilan).
 
+Shifrlash: ``DB_ENCRYPTION_KEY`` (GitHub secret) berilsa nusxa AES-256-GCM
+bilan shifrlanadi (kalit scrypt orqali hosil qilinadi). Kanalga faqat
+shifrlangan blob tushadi — kanal a'zolari ham, Telegram ham, kalitsiz hech kim
+uni o'qiy olmaydi. Kalit yo'qolsa nusxa ham tiklanmaydi — uni xavfsiz saqlang.
+
 Xavfsizlik qoidalari (ma'lumot yo'qolmasligi uchun):
 
 * ``restore`` tarmoq xatosida **xato bilan chiqadi** (kod 2) — bo'sh baza
@@ -39,7 +44,9 @@ from pathlib import Path
 import httpx
 
 TAG = "#hugecloud_db"
-FILE_NAME = "hugecloud-db.sqlite3.gz"
+FILE_NAME = "hugecloud-db.sqlite3.gz"        # shifrlanmagan (eski) nusxa
+ENC_FILE_NAME = "hugecloud-db.enc"           # AES-256-GCM shifrlangan nusxa
+ENC_MAGIC = b"HCENC1"
 MAX_DOWNLOAD = 20 * 1024 * 1024  # Bot API getFile chegarasi
 STATE = Path(os.getenv("DB_SYNC_STATE", "data/.tg_db_sync.json"))
 
@@ -80,7 +87,47 @@ def _call(client: httpx.Client, method: str, *, data=None, files=None, attempts:
 
 def _is_ours(message: dict | None) -> bool:
     doc = (message or {}).get("document") or {}
-    return doc.get("file_name") == FILE_NAME and TAG in ((message or {}).get("caption") or "")
+    return doc.get("file_name") in {FILE_NAME, ENC_FILE_NAME} and TAG in ((message or {}).get("caption") or "")
+
+
+# ---------------------------------------------------------------------------
+# Shifrlash (AES-256-GCM, kalit = scrypt(DB_ENCRYPTION_KEY, salt))
+# ---------------------------------------------------------------------------
+def _passphrase() -> bytes | None:
+    key = os.environ.get("DB_ENCRYPTION_KEY", "").strip()
+    if key and len(key) < 16:
+        raise SystemExit("DB_ENCRYPTION_KEY kamida 16 belgi bo'lishi kerak")
+    return key.encode() if key else None
+
+
+def _derive(passphrase: bytes, salt: bytes) -> bytes:
+    from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+
+    return Scrypt(salt=salt, length=32, n=2**15, r=8, p=1).derive(passphrase)
+
+
+def _encrypt(packed: bytes, passphrase: bytes) -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    salt, nonce = os.urandom(16), os.urandom(12)
+    sealed = AESGCM(_derive(passphrase, salt)).encrypt(nonce, packed, ENC_MAGIC)
+    return ENC_MAGIC + salt + nonce + sealed
+
+
+def _decrypt(blob: bytes, passphrase: bytes | None) -> bytes:
+    if not blob.startswith(ENC_MAGIC):
+        return blob  # eski, shifrlanmagan nusxa
+    if passphrase is None:
+        raise SyncError("baza nusxasi shifrlangan, lekin DB_ENCRYPTION_KEY berilmagan")
+    from cryptography.exceptions import InvalidTag
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    head = len(ENC_MAGIC)
+    salt, nonce, sealed = blob[head:head + 16], blob[head + 16:head + 28], blob[head + 28:]
+    try:
+        return AESGCM(_derive(passphrase, salt)).decrypt(nonce, sealed, ENC_MAGIC)
+    except InvalidTag as exc:
+        raise SyncError("DB_ENCRYPTION_KEY noto'g'ri — nusxani ochib bo'lmadi") from exc
 
 
 def _save_state(state: dict) -> None:
@@ -107,7 +154,8 @@ def restore(db_path: Path) -> int:
         if not _is_ours(pinned):
             print(
                 "::error::Kanalda boshqa xabar pin qilingan. Baza nusxasini topib bo'lmadi. "
-                f"Kanaldagi '{FILE_NAME}' xabarini pin qiling yoki boshqa pinni olib tashlang.",
+                f"Kanaldagi '{ENC_FILE_NAME}' (yoki '{FILE_NAME}') xabarini pin qiling "
+                "yoki boshqa pinni olib tashlang.",
                 file=sys.stderr,
             )
             return 2
@@ -120,14 +168,20 @@ def restore(db_path: Path) -> int:
         url = base.replace("/bot", "/file/bot", 1) + "/" + meta["file_path"]
         raw = client.get(url, timeout=120)
         raw.raise_for_status()
-        data = gzip.decompress(raw.content)
+        data = gzip.decompress(_decrypt(raw.content, _passphrase()))
         if not data.startswith(b"SQLite format 3\x00"):
             raise SyncError("yuklangan fayl SQLite emas")
         db_path.parent.mkdir(parents=True, exist_ok=True)
         for suffix in ("", "-wal", "-shm"):
             Path(f"{db_path}{suffix}").unlink(missing_ok=True)
         db_path.write_bytes(data)
-        _save_state({"message_id": pinned["message_id"], "sha256": hashlib.sha256(data).hexdigest()})
+        # Shifrlanmagan eski nusxa bo'lsa, kalit berilgan zahoti keyingi
+        # backup uni shifrlanganiga almashtirishi uchun sha256 saqlanmaydi.
+        encrypted = doc.get("file_name") == ENC_FILE_NAME
+        state = {"message_id": pinned["message_id"]}
+        if encrypted or _passphrase() is None:
+            state["sha256"] = hashlib.sha256(data).hexdigest()
+        _save_state(state)
         print(f"Baza kanaldan tiklandi ({len(data) // 1024} KB, xabar #{pinned['message_id']}).")
         return 0
 
@@ -157,8 +211,13 @@ def backup(db_path: Path) -> int:
         print("Baza o'zgarmagan — yuborilmadi.")
         return 0
     packed = gzip.compress(data, compresslevel=9)
+    passphrase = _passphrase()
+    name = FILE_NAME
+    if passphrase is not None:
+        packed, name = _encrypt(packed, passphrase), ENC_FILE_NAME
     stamp = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
-    caption = f"{TAG} · {stamp} · {len(data) // 1024} KB\nBu xabarni o'chirmang va pindan olmang."
+    lock = "🔒 shifrlangan" if passphrase is not None else "⚠️ shifrlanmagan"
+    caption = f"{TAG} · {stamp} · {lock}\nBu xabarni o'chirmang va pindan olmang."
     _, chat = _api()
     with httpx.Client() as client:
         message_id = state.get("message_id")
@@ -169,7 +228,7 @@ def backup(db_path: Path) -> int:
                     client,
                     "editMessageMedia",
                     data={"chat_id": chat, "message_id": message_id, "media": json.dumps(media)},
-                    files={"file": (FILE_NAME, packed, "application/gzip")},
+                    files={"file": (name, packed, "application/octet-stream")},
                 )
                 _save_state({"message_id": message_id, "sha256": digest})
                 print(f"Baza nusxasi yangilandi (xabar #{message_id}).")
@@ -180,7 +239,7 @@ def backup(db_path: Path) -> int:
             client,
             "sendDocument",
             data={"chat_id": chat, "caption": caption, "disable_notification": "true"},
-            files={"document": (FILE_NAME, packed, "application/gzip")},
+            files={"document": (name, packed, "application/octet-stream")},
         )
         _call(
             client,

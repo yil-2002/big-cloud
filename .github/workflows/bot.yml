@@ -33,6 +33,7 @@ jobs:
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
       ARCHIVE_CHANNEL_ID: ${{ secrets.ARCHIVE_CHANNEL_ID }}   # fayllar + baza nusxasi shu kanalda
       ADMIN_ID: ${{ secrets.ADMIN_ID }}
+      DB_ENCRYPTION_KEY: ${{ secrets.DB_ENCRYPTION_KEY }}   # kanaldagi baza nusxasini shifrlash (AES-256-GCM)
       # --- Ixtiyoriy ---------------------------------------------------------
       DATABASE_URL: ${{ secrets.DATABASE_URL }}       # bo'sh = baza kanalda (SQLite nusxasi)
       ORIGIN_SECRET: ${{ secrets.ORIGIN_SECRET }}     # Cloudflare Worker (doimiy manzil)

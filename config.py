@@ -317,7 +317,9 @@ class ApiSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="API_", **_BASE_CONFIG)  # type: ignore[typeddict-item]
 
-    host: str = Field(default="0.0.0.0", alias="API_HOST")
+    #: Konteyner (Docker/PaaS) uchun 0.0.0.0; GitHub Actions runner'ida
+    #: ``scripts/gha_run.sh`` ``API_HOST=127.0.0.1`` qo'yadi (faqat tunnel ko'radi).
+    host: str = Field(default="0.0.0.0", alias="API_HOST")  # nosec B104
     #: PaaS platforms (Render, Heroku, Fly) inject ``PORT``; it takes precedence
     #: over ``API_PORT`` so the same image runs anywhere without config edits.
     port: PositiveInt = Field(

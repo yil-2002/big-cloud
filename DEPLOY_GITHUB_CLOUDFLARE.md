@@ -22,7 +22,7 @@ Telegram ──(polling)──► GitHub Actions runner
 
 ---
 
-## Minimal sozlash (3 ta secret)
+## Minimal sozlash (4 ta secret)
 
 ### 1. Kanal
 - Bot yopiq kanalda **admin** bo'lishi kerak. Unga quyidagi huquqlarni bering:
@@ -40,6 +40,11 @@ Telegram ──(polling)──► GitHub Actions runner
 | `BOT_TOKEN` | @BotFather tokeni |
 | `ARCHIVE_CHANNEL_ID` | yopiq kanal ID'si, `-100…` bilan boshlanadi |
 | `ADMIN_ID` | sizning Telegram ID'ingiz |
+| `DB_ENCRYPTION_KEY` | **uzun tasodifiy kalit** (kamida 32 belgi) — kanaldagi baza nusxasini shifrlaydi |
+
+> 🔐 `DB_ENCRYPTION_KEY` ni parol menejerida ham saqlang. **Kalit yo'qolsa,
+> baza nusxasini hech kim — siz ham — ocha olmaydi.** Uni o'zgartirmang:
+> eski nusxa yangi kalit bilan ochilmaydi va bot ishga tushmaydi.
 
 Ixtiyoriy secret'lar: `ADMIN_PASSWORD` (`/diyor` paroli), hamda `TELEGRAM_API_ID` va
 `TELEGRAM_API_HASH` (20 MB dan katta videolarni Mini App'da ko'rish uchun).

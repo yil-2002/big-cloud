@@ -3201,7 +3201,7 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
 
     <div class="player-stage" id="playerStage">
       <video id="mediaEl" playsinline webkit-playsinline preload="metadata"
-             controlslist="nodownload noplaybackrate" disablepictureinpicture="false"><source id="mediaSource" type="video/mp4"></video>
+             controlslist="nodownload noplaybackrate" autopictureinpicture><source id="mediaSource" type="video/mp4"></video>
       <video id="mediaPreload" muted playsinline preload="auto" aria-hidden="true" style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none;"></video>
       <!-- AI Premium muqova: ambient yorug'lik + vinil + rasm preview.
            90° burilish `.art-turn` o'ramida — vinil `spin` animatsiyasi buzilmasin. -->
@@ -6966,13 +6966,22 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
   function updateMediaSession(file) {
     if (!("mediaSession" in navigator)) return;
     try {
+      var art = file.thumbnail_url
+        ? [{ src: toMediaUrl(file.thumbnail_url, window.location.origin, CONFIG.apiPrefix), sizes: "512x512" }]
+        : [];
       navigator.mediaSession.metadata = new MediaMetadata({
         title: file.name || "Media",
         artist: "Huge Cloud",
-        album: file.category || "cloud"
+        album: file.category || "cloud",
+        artwork: art
       });
       navigator.mediaSession.setActionHandler("play", function () { media.play(); });
-      navigator.mediaSession.setActionHandler("pause", function () { media.pause(); });
+      // Qulf ekranidan pauza — foydalanuvchi tanlovi: fon tiklanishi o'chadi.
+      navigator.mediaSession.setActionHandler("pause", function () { player.keepAlive = false; media.pause(); });
+      try {
+        navigator.mediaSession.setActionHandler("nexttrack", function () { playNext(1); });
+        navigator.mediaSession.setActionHandler("previoustrack", function () { playNext(-1); });
+      } catch (e) { /* eski brauzer */ }
       navigator.mediaSession.setActionHandler("seekbackward", function () { skip(-10); });
       navigator.mediaSession.setActionHandler("seekforward", function () { skip(10); });
       navigator.mediaSession.setActionHandler("seekto", function (details) {
@@ -7753,6 +7762,22 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
         (player.index < player.queue.length - 1 || (player.repeat && player.queue.length > 1))) {
       playNext(1);
     }
+  });
+  // Qulf ekrani vaqt chizig'i (Media Session position state, ~5 s da bir).
+  var lastPositionSync = 0;
+  media.addEventListener("timeupdate", function () {
+    var now = Date.now();
+    if (now - lastPositionSync < 5000 || !("mediaSession" in navigator) ||
+        !navigator.mediaSession.setPositionState) return;
+    lastPositionSync = now;
+    try {
+      if (isFinite(media.duration) && media.duration > 0) {
+        navigator.mediaSession.setPositionState({
+          duration: media.duration, playbackRate: media.playbackRate || 1,
+          position: Math.min(media.currentTime, media.duration)
+        });
+      }
+    } catch (e) { /* ixtiyoriy API */ }
   });
   media.addEventListener("timeupdate", function () {
     updateProgressUi();
@@ -8955,11 +8980,28 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
     else if (event.key === "t" || event.key === "T") { event.preventDefault(); toggleTheme(); }
   });
 
-  // Ilova fonga o'tganda ijro davom etadi (audio), lekin video'ni to'xtatamiz
+  /* Fon ijrosi: ekran o'chsa yoki ilova fonga o'tsa ham musiqa VA video
+     (ovozi) to'xtamaydi. Ilgari video bu yerda majburan pauza qilinardi.
+     Ba'zi WebView'lar fonga o'tishda media'ni o'zi pauza qiladi — foydalanuvchi
+     o'zi to'xtatmagan bo'lsa, ijroni qayta tiklaymiz (bir necha urinish). */
+  player.keepAlive = false;
   document.addEventListener("visibilitychange", function () {
-    if (document.hidden && player.open && !isAudioOnly(player.file)) {
-      try { media.pause(); } catch (e) {}
+    if (document.hidden) {
+      player.keepAlive = Boolean(player.open && !media.paused && !media.ended);
+      player.keepAliveTries = 0;
+    } else {
+      player.keepAlive = false;
     }
+  });
+  media.addEventListener("pause", function () {
+    if (!document.hidden || !player.keepAlive || !player.open || media.ended) return;
+    if ((player.keepAliveTries = (player.keepAliveTries || 0) + 1) > 3) return;
+    setTimeout(function () {
+      if (document.hidden && player.keepAlive && media.paused) {
+        var resumed = media.play();
+        if (resumed && resumed.catch) resumed.catch(function () { /* WebView ruxsat bermadi */ });
+      }
+    }, 250);
   });
 
   // Telegram "back" tugmasi: avval overlay'lar, keyin ilova yopiladi
@@ -9096,31 +9138,69 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
 
   /* ---------------------------------------------------------------- spiral */
   var VS = "#version 300 es\nin vec2 aPos; void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }";
+  /* 3D monoxrom sahna (2026): perspektivali to'lqinsimon nuqtali yer yuzasi +
+     ufq ustida aylanuvchi simli globus. Hammasi ANALITIK (raymarching yo'q):
+     tekislik proyeksiyasi va nur-sfera kesishuvi — telefon GPU'si uchun yengil.
+     Rang yo'q: faqat oq/qora (uInvert yorug' mavzuda teskari qiladi). */
   var FS = [
     "#version 300 es",
     "precision highp float;",
     "uniform vec2 uRes; uniform float uTime; uniform float uInvert; uniform float uIntensity;",
     "out vec4 fragColor;",
     "float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453123); }",
+    "float wave(vec2 p, float t){",
+    "  return sin(p.x*0.9 + t*0.7)*0.55 + sin(p.y*0.7 - t*0.5)*0.45 + sin((p.x+p.y)*0.45 + t*0.35)*0.35;",
+    "}",
     "void main(){",
     "  vec2 uv = (gl_FragCoord.xy - 0.5*uRes)/uRes.y;",
-    "  float r = length(uv); float a = atan(uv.y, uv.x);",
-    "  float z = 1.0/(r + 0.32);",
-    "  float twist = a + z*2.8 + uTime*0.20;",
-    "  float s1 = sin(twist*3.0 - uTime*0.50);",
-    "  float s2 = sin(twist*6.0 + uTime*0.20);",
-    "  float aa1 = min(fwidth(s1)*1.2, 0.35) + 0.005;",
-    "  float aa2 = min(fwidth(s2)*1.2, 0.35) + 0.005;",
-    "  float l1 = 1.0 - smoothstep(0.0, (0.16+0.50*r)+aa1, abs(s1));",
-    "  float l2 = 1.0 - smoothstep(0.0, (0.10+0.28*r)+aa2, abs(s2));",
-    "  float rings = 1.0 - smoothstep(0.0, 0.35, abs(sin(z*3.2 - uTime*1.05)));",
-    "  float glow = l1*0.76 + l2*0.24 + rings*0.20*(1.0-l1);",
-    "  glow *= smoothstep(0.025, 0.24, r);",
-    "  glow *= 1.0 - smoothstep(0.58, 1.25, r);",
-    "  float grain = (hash(gl_FragCoord.xy + fract(uTime)*137.0) - 0.5)*0.04;",
-    "  float vig = smoothstep(1.30, 0.12, r);",
-    "  float v = clamp(glow*vig*uIntensity + grain, 0.0, 1.0);",
-    "  fragColor = vec4(mix(vec3(v), vec3(1.0-v), uInvert), 1.0);",
+    "  float t = uTime;",
+    "  float horizon = 0.06;",
+    "  float v = 0.0;",
+    /* --- yer yuzasi: ekran nuqtasini y=-h tekislikka proyeksiya qilish --- */
+    "  float d = horizon - uv.y;",
+    "  if (d > 0.002) {",
+    "    float z = 0.6 / d;",
+    "    vec2 p = vec2(uv.x * z * 1.6, z + t*0.9);",
+    "    float h = wave(p, t);",
+    "    vec2 g = p*vec2(3.2,1.6) + vec2(0.0, h*0.35);",
+    "    vec2 cell = abs(fract(g) - 0.5);",
+    "    vec2 w = fwidth(g)*1.4 + 0.012;",
+    "    float grid = max(smoothstep(0.5 - w.x, 0.5, cell.x), smoothstep(0.5 - w.y, 0.5, cell.y));",
+    "    float node = (1.0 - smoothstep(0.0, 0.09 + w.x, length(0.5 - cell)));",
+    "    float fog = exp(-z*0.07);",
+    "    float lit = 0.45 + 0.55*smoothstep(-1.0, 1.2, h);",
+    "    v += (grid*0.75 + node*0.9) * fog * lit;",
+    "  }",
+    /* --- simli globus: nur-sfera kesishuvi, kenglik/uzunlik chiziqlari --- */
+    "  vec2 c = vec2(0.22, 0.33);",
+    "  float R = 0.15;",
+    "  vec2 q = uv - c;",
+    "  float q2 = dot(q,q);",
+    "  if (q2 < R*R) {",
+    "    float zc = sqrt(R*R - q2);",
+    "    vec3 n = normalize(vec3(q, zc));",
+    "    float a = t*0.25;",
+    "    float ca = cos(a), sa = sin(a);",
+    "    vec3 m = vec3(ca*n.x + sa*n.z, n.y, -sa*n.x + ca*n.z);",
+    "    float tilt = 0.38; float ct = cos(tilt), st = sin(tilt);",
+    "    m = vec3(m.x, ct*m.y - st*m.z, st*m.y + ct*m.z);",
+    "    float lon = atan(m.z, m.x) / 6.28318 * 18.0;",
+    "    float lat = asin(clamp(m.y, -1.0, 1.0)) / 3.14159 * 9.0;",
+    "    float gx = abs(fract(lon) - 0.5); float gy = abs(fract(lat) - 0.5);",
+    "    float wl = fwidth(lon) * 1.5 + 0.02; float wt = fwidth(lat) * 1.5 + 0.02;",
+    "    float grid = max(smoothstep(0.5 - wl, 0.5, gx), smoothstep(0.5 - wt, 0.5, gy));",
+    "    float light = 0.35 + 0.65*max(dot(n, normalize(vec3(-0.5, 0.6, 0.8))), 0.0);",
+    "    float rim = pow(1.0 - n.z, 2.2);",
+    "    v += grid * light * 0.85 + rim * 0.55;",
+    "  }",
+    /* --- globus atrofidagi halo va ufq yorug'ligi --- */
+    "  float ring = length(uv - c);",
+    "  v += exp(-pow((ring - R - 0.006)*40.0, 2.0)) * 0.35;",
+    "  v += exp(-abs(uv.y - horizon)*38.0) * 0.18;",
+    "  float grain = (hash(gl_FragCoord.xy + fract(t)*137.0) - 0.5)*0.035;",
+    "  float vig = smoothstep(1.35, 0.15, length(uv*vec2(0.9,1.0)));",
+    "  float o = clamp(v*vig*uIntensity + grain, 0.0, 1.0);",
+    "  fragColor = vec4(mix(vec3(o), vec3(1.0-o), uInvert), 1.0);",
     "}"
   ].join("\n");
 
@@ -9164,7 +9244,8 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
 
   function sizeCanvas() {
     if (!gl) return;
-    var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    /* Yarim o'lchamda chiziladi (CSS cho'zadi): fon yumshoq, GPU yuki ~4× kam. */
+    var dpr = Math.min(window.devicePixelRatio || 1, 2) * 0.5;
     var w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
     var h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
     if (canvas.width !== w || canvas.height !== h) {
@@ -9178,14 +9259,16 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
      telefon CPU'sining ~85% ini yeb, bo'lim almashishni 2 barobar
      sekinlashtirardi. Xohlasa `window.__v2Spiral.animate(true)` bilan sekin
      (12 FPS) animatsiyani yoqish mumkin. */
-  var animate = false;
+  /* 3D sahna sekin harakatlanadi: 24 FPS, yarim o'lcham, pleer ochiq/fon
+     holatida va "harakatni kamaytirish" yoqilganda to'xtaydi. */
+  var animate = !reduced;
 
   function drawFrame(now) {
     if (!gl) return;
     sizeCanvas();
     gl.uniform1f(uTime, (now - t0) / 1000);
     gl.uniform1f(uInvert, theme() === "light" ? 1.0 : 0.0);
-    gl.uniform1f(uIntensity, 0.36);
+    gl.uniform1f(uIntensity, 0.62);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
@@ -9194,7 +9277,7 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
     return !!(bd && bd.classList.contains("is-open"));
   }
 
-  var MIN_ANIM_DT = 1000 / 12;      /* animatsiya yoqilganda 12 FPS */
+  var MIN_ANIM_DT = 1000 / 24;      /* 24 FPS — silliq, lekin batareyani tejaydi */
 
   function loop(now) {
     rafId = 0;

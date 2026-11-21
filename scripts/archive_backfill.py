@@ -24,6 +24,7 @@ Ishlatish:
 
 from __future__ import annotations
 
+import hashlib
 import argparse
 import asyncio
 import logging
@@ -93,9 +94,9 @@ async def main() -> int:
         done = skipped = failed = 0
         try:
             for index, record in enumerate(rows, 1):
-                caption = (
-                    f"{archive.caption_prefix}\nuser={record.user_id}\nname={record.file_name}"
-                )[:1024]
+                # Anonim izoh (services/vault.py bilan bir xil qoida).
+                ref = hashlib.sha256(str(record.id).encode()).hexdigest()[:12]
+                caption = f"{archive.caption_prefix} · {ref}"
                 try:
                     message = await bot.send_document(
                         chat_id=archive.numeric_id or archive.channel_id,

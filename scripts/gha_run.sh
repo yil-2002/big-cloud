@@ -42,7 +42,7 @@ die() { echo "::error::$*"; exit 1; }
 # Bo'sh secret'lar "" bo'lib keladi — pydantic int maydonlarda yiqilmasin.
 for var in ADMIN_ID ADMIN_IDS ADMIN_PASSWORD ARCHIVE_CHANNEL_ID TELEGRAM_API_ID \
            TELEGRAM_API_HASH JWT_SECRET BOT_USERNAME BOT_PASSWORD DATABASE_URL \
-           ORIGIN_SECRET CF_TUNNEL_TOKEN; do
+           ORIGIN_SECRET CF_TUNNEL_TOKEN DB_ENCRYPTION_KEY; do
   if [ -z "${!var:-}" ]; then unset "$var"; fi
 done
 
@@ -55,6 +55,11 @@ else
   [ -n "${ARCHIVE_CHANNEL_ID:-}" ] || die "ARCHIVE_CHANNEL_ID secret kerak: baza yopiq kanalda saqlanadi (bot kanalda admin bo'lsin)."
   DB_MODE="telegram"
   export DATABASE_URL="sqlite+aiosqlite:///./$DB_FILE"
+  if [ -z "${DB_ENCRYPTION_KEY:-}" ]; then
+    echo "::warning::DB_ENCRYPTION_KEY secret yo'q — kanaldagi baza nusxasi SHIFRLANMAGAN. Uzun tasodifiy kalit qo'shing."
+  else
+    log "Baza nusxasi shifrlanadi (AES-256-GCM)"
+  fi
 fi
 
 if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
@@ -167,7 +172,9 @@ start_tunnel() {
     sleep 1
   done
   [ -n "$ORIGIN" ] || { tail -n 30 "$CF_LOG"; return 1; }
-  [ "$URL_MODE" = "worker" ] && echo "::add-mask::$ORIGIN"
+  # Ommaviy repo: Actions loglari hammaga ko'rinadi — tunnel manzili yashiriladi.
+  echo "::add-mask::$ORIGIN"
+  echo "::add-mask::${ORIGIN#https://}"
   log "Tunnel ochildi${URL_MODE:+ ($URL_MODE)}"
 }
 
@@ -238,7 +245,7 @@ if [ "$URL_MODE" = "direct" ]; then
   export_urls "$ORIGIN"
   start_app
   wait_tunnel_ready || echo "::warning::Tunnel hali javob bermayapti (DNS tarqalmoqda)"
-  log "Mini App manzili: $ORIGIN/index.html"
+  log "Mini App tayyor (manzil maxfiylik uchun logda yashirilgan; bot menyu tugmasi orqali oching)"
 else
   export_urls "$PUBLIC_URL"
   start_app

@@ -97,12 +97,12 @@ async def copy(source_url: str, target_url: str, *, force: bool) -> None:
                 pk = list(table.primary_key.columns)
                 if len(pk) != 1 or not pk[0].autoincrement or pk[0].type.python_type is not int:
                     continue
-                await d_conn.execute(
-                    text(
-                        f"SELECT setval(pg_get_serial_sequence('{table.name}', '{pk[0].name}'), "
-                        f"COALESCE((SELECT MAX({pk[0].name}) FROM {table.name}), 0) + 1, false)"
-                    )
-                )
+                # Jadval/ustun nomlari ORM metadata'sidan (foydalanuvchi kiritmasi emas)
+                # va baribir dialekt qoidasi bilan qo'shtirnoqlanadi.
+                quote = d_conn.dialect.identifier_preparer.quote
+                tbl, col = quote(table.name), quote(pk[0].name)
+                sql = f"SELECT setval(pg_get_serial_sequence('{tbl}', '{pk[0].name}'), COALESCE((SELECT MAX({col}) FROM {tbl}), 0) + 1, false)"  # nosec B608
+                await d_conn.execute(text(sql))
         print("Tayyor ✅")
     finally:
         await src.dispose()

@@ -35,6 +35,7 @@ Xavfsizlik va ishonchlilik
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -277,7 +278,7 @@ class ArchiveVault:
         if not archive.configured:
             return ArchiveResult(ok=False, error="archive disabled")
 
-        text = self._vault_caption(telegram_id, file_name, caption)
+        text = self._vault_caption(file_uuid)
         attempts = max(1, archive.max_attempts)
         last_error: str | None = None
 
@@ -410,13 +411,18 @@ class ArchiveVault:
             logger.info("Recovered file_id for %s from the archive", record.id)
         return channel_file_id
 
-    def _vault_caption(self, telegram_id: int, file_name: str, caption: str | None) -> str:
-        """Arxiv nusxasiga yoziladigan izoh (audit izi)."""
+    def _vault_caption(self, file_uuid: Any) -> str:
+        """Arxiv nusxasiga yoziladigan izoh — **anonim**.
+
+        Maxfiylik: ilgari izohda ``user=<telegram id>`` va ``name=<fayl nomi>``
+        ochiq yozilardi — kanalga kirgan har kim kimning qanday fayli borligini
+        ko'rardi. Endi faqat prefiks va fayl UUID'idan olingan qisqa belgi
+        (bog'lanish bazada: ``files.archive_message_id``). Audit izi bazadagi
+        ``audit_logs`` da qoladi (baza nusxasi shifrlangan).
+        """
         prefix = self.settings.archive.caption_prefix or "☁️ ARCHIVE"
-        parts = [prefix, f"user={telegram_id}", f"name={file_name}"]
-        if caption:
-            parts.append(caption.replace("\n", " ")[:200])
-        return "\n".join(parts)[:1024]
+        ref = hashlib.sha256(str(file_uuid).encode()).hexdigest()[:12]
+        return f"{prefix} · {ref}"
 
     # ------------------------------------------------------------------
     # Ichki yordamchilar

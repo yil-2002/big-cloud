@@ -179,10 +179,12 @@ async def test_archive_message_persists_channel_ids(settings, storage, user, vau
     assert result.message_id == bot.next_message_id
     assert "copy_message" in bot.calls
 
-    # Kanalga yuborilgan izoh audit uchun foydalanuvchini ham qayd etadi.
+    # Maxfiylik: kanal izohida foydalanuvchi ID'si, fayl nomi va izoh YO'Q.
     caption = bot.copy_kwargs[0]["caption"]
-    assert str(user.telegram_id) in caption
-    assert "hisobot.pdf" in caption
+    assert str(user.telegram_id) not in caption
+    assert "hisobot.pdf" not in caption
+    assert "muhim hujjat" not in caption
+    assert caption.startswith(settings.archive.caption_prefix)
     assert bot.copy_kwargs[0]["chat_id"] == settings.archive.channel_id
 
     # Baza qatori yangilangan (yangi sessiyadan o'qiymiz).
