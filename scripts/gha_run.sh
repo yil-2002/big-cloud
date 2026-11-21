@@ -69,8 +69,10 @@ log "Rejim: baza=$DB_MODE, manzil=$URL_MODE"
 
 if [ -n "${TELEGRAM_API_ID:-}" ] && [ -n "${TELEGRAM_API_HASH:-}" ]; then
   export MT_MEDIA_ENABLED=true
+  log "MTProto yoqildi: Mini App 2 GB gacha fayllarni ijro etadi"
 else
   export MT_MEDIA_ENABLED=false
+  echo "::warning::TELEGRAM_API_ID/TELEGRAM_API_HASH secret'lari yo'q — Mini App faqat 20 MB gacha fayllarni ijro etadi"
 fi
 export PORT API_PORT="$PORT" API_HOST=127.0.0.1
 mkdir -p data

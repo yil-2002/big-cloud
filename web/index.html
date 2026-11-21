@@ -6344,7 +6344,10 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
     wrap.appendChild(btnNative);
     var result = await openSheet({
       title: ((file && file.name) || "Katta fayl"),
-      subtitle: humanSize(file && file.size) + " — onlayn chegara " + humanSize(CONFIG.streamMaxSize),
+      // Server rad etgan bo'lsa (``message`` bor) haqiqiy chegara serverda —
+      // qotirilgan 2 GB ni ko'rsatish chalg'itardi ("chegara 2 GB, fayl 27 MB").
+      subtitle: humanSize(file && file.size) +
+        (message ? "" : " — onlayn chegara " + humanSize(CONFIG.streamMaxSize)),
       node: wrap,
       actions: [{ label: "Yopish", value: false }]
     });
