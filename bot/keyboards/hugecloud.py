@@ -108,7 +108,7 @@ def auth_gate_kb(*, web_app_url: str | None = None) -> InlineKeyboardMarkup:
     """
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text=texts.gate_button_login(), callback_data="auth:login"),
+        InlineKeyboardButton(text=texts.gate_button_login(), callback_data="auth:login", style="success"),
         InlineKeyboardButton(text=texts.gate_button_register(), callback_data="auth:register"),
     )
     if web_app_url:
@@ -116,6 +116,7 @@ def auth_gate_kb(*, web_app_url: str | None = None) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=f"{Emoji.WEB_APP.plain()} {MINI_APP_LABEL}",
                 web_app=WebAppInfo(url=web_app_url),
+                style="primary",
             )
         )
     builder.row(InlineKeyboardButton(text=texts.gate_button_help(), callback_data="auth:help"))
@@ -135,6 +136,7 @@ def mini_app_home_kb(*, web_app_url: str | None = None) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=f"{Emoji.WEB_APP.plain()} {texts.home_open_mini_app()}",
                 web_app=WebAppInfo(url=web_app_url),
+                style="primary",
             )
         )
     builder.row(_button(_group_text("media"), "grp:media:0"), _button(_group_text("audio"), "grp:audio:0"))

@@ -2308,6 +2308,17 @@ html[data-design="v2"] #spiral-canvas {
   opacity: 0.55;
 }
 html[data-design="v2"][data-theme="light"] #spiral-canvas { opacity: 0.28; }
+/* Vanta bulutlar (yorug': CLOUDS, qorong'i: CLOUDS2). Klassik dizaynda yo'q. */
+#vanta-bg { display: none; }
+html[data-design="v2"] #vanta-bg {
+  display: block;
+  position: fixed; inset: 0;
+  z-index: -1; pointer-events: none;
+  opacity: 0; transition: opacity 900ms var(--ease);
+}
+html[data-design="v2"].has-vanta #vanta-bg { opacity: 0.92; }
+html[data-design="v2"][data-theme="dark"].has-vanta #vanta-bg { opacity: 0.85; }
+html[data-design="v2"].has-vanta #spiral-canvas { display: none; }
 /* O'qish qulayligi uchun kontent orqasida yumshoq parda */
 /* Diqqat: `backdrop-filter` faqat bir nechta kichik yuzalarda qoladi —
    ro'yxatdagi har bir karta uchun blur hisoblash telefonda sezilarli
@@ -9291,6 +9302,7 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
 
   function start() {
     if (!gl) return;
+    if (root.classList.contains("has-vanta")) return;   /* bulutlar ishlayapti */
     /* Statik rejim: bitta chizish yetarli. */
     drawFrame(performance.now());
     if (animate && !reduced && !rafId) rafId = requestAnimationFrame(loop);
@@ -9326,9 +9338,140 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
     isAnimating: function () { return animate; }
   };
 
+  /* ----------------------------------------------------------- Vanta bulutlar
+     Yorug' mavzu: VANTA.CLOUDS (quyoshli osmon), qorong'i: VANTA.CLOUDS2 (tun).
+     * Skriptlar LOKAL (web/vendor/) — tashqi CDN yo'q (xavfsizlik + tezlik).
+     * mouse/touch/gyro boshqaruvi O'CHIQ: swipe paytida fon surilmaydi,
+       faqat bulutlar o'z-o'zidan harakatlanadi.
+     * Telefonda past aniqlikda chiziladi (scaleMobile) — bulut baribir yumshoq,
+       GPU yuki ~10 barobar kam. Pleer/rasm ko'ruvchi ochiq bo'lsa — pauza.
+     * Yuklanmasa yoki WebGL yo'q bo'lsa — yuqoridagi 3D shader zaxira qoladi. */
+  /* `/static` har doim ulangan (api/app.py) — mount_path qanday bo'lmasin ishlaydi. */
+  var VANTA_FILES = ["/static/vendor/three.r134.min.js", "/static/vendor/vanta.clouds.min.js", "/static/vendor/vanta.clouds2.min.js"];
+  var VANTA_THEMES = {
+    light: {
+      effect: "CLOUDS",
+      options: {
+        backgroundColor: 0xffffff,
+        skyColor: 0x7cc2e0,
+        cloudColor: 0xc3d1e6,
+        cloudShadowColor: 0x1d3a55,
+        sunColor: 0xffb347,
+        sunGlareColor: 0xff8a5c,
+        sunlightColor: 0xffc27a,
+        speed: 0.8
+      }
+    },
+    dark: {
+      effect: "CLOUDS2",
+      options: {
+        backgroundColor: 0x000000,
+        skyColor: 0x2a4a68,
+        cloudColor: 0x1b2740,
+        lightColor: 0xe8eef7,
+        speed: 0.8,
+        texturePath: "/static/vendor/noise.png"
+      }
+    }
+  };
+  var vanta = { el: null, effect: null, theme: "", loading: null, paused: false };
+
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      var tag = document.createElement("script");
+      tag.src = src;
+      tag.async = false;               /* tartib muhim: avval three, keyin vanta */
+      tag.onload = resolve;
+      tag.onerror = function () { reject(new Error("load failed: " + src)); };
+      document.head.appendChild(tag);
+    });
+  }
+
+  function loadVanta() {
+    if (!vanta.loading) {
+      vanta.loading = VANTA_FILES.reduce(function (chain, src) {
+        return chain.then(function () { return loadScript(src); });
+      }, Promise.resolve());
+    }
+    return vanta.loading;
+  }
+
+  function overlayOpen() {
+    var ids = ["playerBackdrop", "viewerBackdrop"];
+    for (var i = 0; i < ids.length; i++) {
+      var node = document.getElementById(ids[i]);
+      if (node && node.classList.contains("is-open")) return true;
+    }
+    return false;
+  }
+
+  function vantaPause(pause) {
+    var fx = vanta.effect;
+    if (!fx || vanta.paused === pause) return;
+    vanta.paused = pause;
+    if (pause) {
+      window.cancelAnimationFrame(fx.req);
+    } else {
+      fx.prevNow = performance.now();  /* pauzadan keyin vaqt sakramasin */
+      fx.animationLoop();
+    }
+  }
+
+  function vantaApply() {
+    if (design() !== "v2" || !window.VANTA) return;
+    var mode = theme();
+    if (vanta.effect && vanta.theme === mode) return;
+    var cfg = VANTA_THEMES[mode];
+    var factory = window.VANTA[cfg.effect];
+    if (typeof factory !== "function") return;
+    if (vanta.effect) { try { vanta.effect.destroy(); } catch (e) {} vanta.effect = null; }
+    try {
+      vanta.effect = factory(Object.assign({
+        el: vanta.el,
+        mouseControls: false,
+        touchControls: false,
+        gyroControls: false,
+        minHeight: 200.0,
+        minWidth: 200.0,
+        scale: 1.0,
+        scaleMobile: 3.0
+      }, cfg.options));
+      vanta.theme = mode;
+      vanta.paused = false;
+      root.classList.add("has-vanta");
+      stop();                          /* zaxira shader endi kerak emas */
+      if (overlayOpen()) vantaPause(true);
+    } catch (e) {
+      vanta.effect = null;
+      root.classList.remove("has-vanta");
+    }
+  }
+
+  function initVanta() {
+    if (reduced || design() !== "v2" || vanta.el) return;
+    vanta.el = document.createElement("div");
+    vanta.el.id = "vanta-bg";
+    vanta.el.setAttribute("aria-hidden", "true");
+    document.body.insertBefore(vanta.el, document.body.firstChild);
+    loadVanta().then(vantaApply).catch(function () {
+      root.classList.remove("has-vanta");   /* shader zaxira ko'rinib qoladi */
+    });
+    /* Mavzu almashsa — mos effekt; pleer/rasm ochilsa — pauza. */
+    new MutationObserver(function () { if (window.VANTA) vantaApply(); })
+      .observe(root, { attributes: true, attributeFilter: ["data-theme", "data-design"] });
+    var watch = new MutationObserver(function () { vantaPause(overlayOpen()); });
+    ["playerBackdrop", "viewerBackdrop"].forEach(function (id) {
+      var node = document.getElementById(id);
+      if (node) watch.observe(node, { attributes: true, attributeFilter: ["class"] });
+    });
+  }
+
   function boot() {
     if (design() === "v2") initSpiral();
     syncThemeColor();
+    /* Bulutlar birinchi chizishdan keyin yuklanadi — ochilish sekinlashmaydi. */
+    var later = window.requestIdleCallback || function (fn) { return setTimeout(fn, 400); };
+    later(initVanta);
   }
 
   if (document.readyState === "loading") {

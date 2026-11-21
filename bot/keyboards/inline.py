@@ -109,6 +109,67 @@ def to_uuid(value: str) -> uuid.UUID:
     return uuid.UUID(value)
 
 
+# ---------------------------------------------------------------------------
+# Tugma tili va uslubi
+# ---------------------------------------------------------------------------
+#: Tugma yozuvlari ``APP_LANGUAGE`` ga qarab (inglizcha — kalit va zaxira).
+#: Inline tugmalar handler'larga ``callback_data`` orqali boradi, shuning uchun
+#: matnni tarjima qilish marshrutlashga ta'sir qilmaydi.
+_LABELS: dict[str, dict[str, str]] = {
+    "uz": {
+        "1 hour": "1 soat", "24 hours": "24 soat", "Back": "Orqaga",
+        "Back to files": "Fayllarga qaytish", "Cancel": "Bekor qilish",
+        "Create new": "Yangi yaratish", "Dashboard": "Bosh sahifa", "Delete": "O'chirish",
+        "Delete folder": "Papkani o'chirish", "Download": "Yuklab olish",
+        "Inline mode": "Inline rejim", "Link + pass code": "Havola + kod", "Move": "Ko'chirish",
+        "My files": "Fayllarim", "Never": "Muddatsiz", "New folder": "Yangi papka",
+        "New link (7 days)": "Yangi havola (7 kun)", "Open Mini App": "Ilovani ochish",
+        "Parent folder": "Yuqori papka", "Play in web player": "Pleerda ijro etish",
+        "Refresh": "Yangilash", "Rename": "Nomini o'zgartirish", "Root (no folder)": "Asosiy (papkasiz)",
+        "Search": "Qidirish", "Settings": "Sozlamalar", "Share": "Ulashish", "Sharing": "Ulashishlar",
+        "Statistics": "Statistika", "Stats": "Statistika", "Web": "Ilova",
+        "Delete everything": "Hammasini o'chirish", "Yes, delete": "Ha, o'chirilsin",
+        "Make public": "Ommaviy qilish", "Make private": "Yopiq qilish",
+    },
+    "ru": {
+        "1 hour": "1 час", "24 hours": "24 часа", "Back": "Назад",
+        "Back to files": "К файлам", "Cancel": "Отмена", "Create new": "Создать",
+        "Dashboard": "Главная", "Delete": "Удалить", "Delete folder": "Удалить папку",
+        "Download": "Скачать", "Inline mode": "Инлайн-режим", "Link + pass code": "Ссылка + код",
+        "Move": "Переместить", "My files": "Мои файлы", "Never": "Бессрочно",
+        "New folder": "Новая папка", "New link (7 days)": "Новая ссылка (7 дней)",
+        "Open Mini App": "Открыть приложение", "Parent folder": "Наверх",
+        "Play in web player": "Воспроизвести", "Refresh": "Обновить", "Rename": "Переименовать",
+        "Root (no folder)": "Корень (без папки)", "Search": "Поиск", "Settings": "Настройки",
+        "Share": "Поделиться", "Sharing": "Ссылки", "Statistics": "Статистика", "Stats": "Статистика",
+        "Web": "Приложение", "Delete everything": "Удалить всё", "Yes, delete": "Да, удалить",
+        "Make public": "Сделать публичным", "Make private": "Сделать приватным",
+    },
+}
+
+
+def tr(text: str) -> str:
+    """Tugma yozuvini bot tiliga o'girish (topilmasa — asl matn)."""
+    if not text:
+        return text
+    try:
+        from config import get_settings
+
+        lang = get_settings().app.language
+    except Exception:  # pragma: no cover - sozlamasiz (testlar) holat
+        return text
+    return _LABELS.get(lang, {}).get(text, text)
+
+
+#: Bot API 9.4+ rangli tugmalar: asosiy amal (ko'k), tasdiq (yashil), xavfli (qizil).
+PRIMARY, SUCCESS, DANGER = "primary", "success", "danger"
+
+
+def styled(button: InlineKeyboardButton, style: str) -> InlineKeyboardButton:
+    """Tugmaga rang uslubini qo'shish (eski mijozlar e'tiborsiz qoldiradi)."""
+    return button.model_copy(update={"style": style})
+
+
 def label(emoji: Any, text: str, *, premium: bool = False) -> str:
     """Button caption with optional custom emoji markup.
 
@@ -116,7 +177,7 @@ def label(emoji: Any, text: str, *, premium: bool = False) -> str:
     users and only when custom ids are configured - otherwise plain Unicode.
     """
     icon = emoji.render(premium=premium) if custom_emoji_enabled() else emoji.plain()
-    return f"{icon} {text}"
+    return f"{icon} {tr(text)}"
 
 
 def cancel_button(*, premium: bool = False) -> InlineKeyboardButton:
@@ -201,10 +262,10 @@ def main_menu_keyboard(user: User, *, web_app_url: str | None = None) -> InlineK
         rows.insert(
             0,
             [
-                InlineKeyboardButton(
+                styled(InlineKeyboardButton(
                     text=label(Emoji.WEB_APP, "Open Mini App", premium=premium),
                     web_app={"url": web_app_url},
-                )
+                ), PRIMARY)
             ],
         )
     return _markup(rows)
@@ -283,10 +344,10 @@ def storage_keyboard(
     ]
     if current is not None:
         action_row.append(
-            InlineKeyboardButton(
+            styled(InlineKeyboardButton(
                 text=label(Emoji.DELETE, "Delete folder", premium=premium),
                 callback_data=ConfirmFactory(kind="folder", action="ask", uid=folder_uid).pack(),
-            )
+            ), DANGER)
         )
     rows.append(action_row)
 
@@ -301,9 +362,9 @@ def storage_keyboard(
     ]
     if web_app_url:
         bottom.append(
-            InlineKeyboardButton(
+            styled(InlineKeyboardButton(
                 text=label(Emoji.WEB_APP, "Web", premium=premium), web_app={"url": web_app_url}
-            )
+            ), PRIMARY)
         )
     rows.append(bottom)
     return _markup(rows)
@@ -320,10 +381,10 @@ def file_actions_keyboard(
 
     rows: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(
+            styled(InlineKeyboardButton(
                 text=label(Emoji.DOWNLOAD, "Download", premium=premium),
                 callback_data=FileActionFactory(action="dl", uid=uid, folder=back_folder).pack(),
-            ),
+            ), SUCCESS),
             InlineKeyboardButton(
                 text=label(Emoji.SHARE, "Share", premium=premium),
                 callback_data=ShareFactory(action="links", uid=uid).pack(),
@@ -346,20 +407,20 @@ def file_actions_keyboard(
                            premium=premium),
                 callback_data=FileActionFactory(action="vis", uid=uid, folder=back_folder).pack(),
             ),
-            InlineKeyboardButton(
+            styled(InlineKeyboardButton(
                 text=label(Emoji.DELETE, "Delete", premium=premium),
                 callback_data=ConfirmFactory(kind="file", action="ask", uid=uid).pack(),
-            ),
+            ), DANGER),
         ],
     ]
     if record.is_streamable:
         rows.insert(
             0,
             [
-                InlineKeyboardButton(
+                styled(InlineKeyboardButton(
                     text=label(Emoji.PLAY, "Play in web player", premium=premium),
                     callback_data=FileActionFactory(action="play", uid=uid, folder=back_folder).pack(),
-                )
+                ), PRIMARY)
             ],
         )
     rows.append(
@@ -380,12 +441,12 @@ def confirm_keyboard(kind: str, uid: str, *, user: User, destructive: bool = Tru
     yes_text = "Delete everything" if kind == "folder" and destructive else "Yes, delete"
     rows: list[list[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(
+            styled(InlineKeyboardButton(
                 text=label(Emoji.CHECK, yes_text, premium=premium),
                 callback_data=ConfirmFactory(
                     kind=kind, action="yes_all" if kind == "folder" else "yes", uid=uid
                 ).pack(),
-            ),
+            ), DANGER if destructive else SUCCESS),
             InlineKeyboardButton(
                 text=label(Emoji.CROSS, "Cancel", premium=premium),
                 callback_data=ConfirmFactory(kind=kind, action="no", uid=uid).pack(),

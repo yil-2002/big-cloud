@@ -321,7 +321,7 @@ async def on_file_play(
     await callback.message.answer(
         f"▶️ <b>{escape_html(truncate_middle(record.file_name or 'Media', 60))}</b>",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="▶️ Pleerda ochish", web_app=WebAppInfo(url=player_url))]]
+            inline_keyboard=[[InlineKeyboardButton(text="▶️ Pleerda ochish", web_app=WebAppInfo(url=player_url), style="primary")]]
         ),
     )
 
