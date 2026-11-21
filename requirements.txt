@@ -30,7 +30,7 @@ alembic>=1.16.5                 # sxema migratsiyalari (scripts/migrate.py bilan
 redis[hiredis]>=8.1.0           # async Redis klient (kesh + limit + sessiya)
 
 # --- Settings & validation -------------------------------------------------
-pydantic>=2.13.4
+pydantic>=2.14.3
 pydantic-settings>=2.11.0
 
 # --- Utilities -------------------------------------------------------------
