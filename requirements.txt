@@ -31,7 +31,7 @@ redis[hiredis]>=8.1.0           # async Redis klient (kesh + limit + sessiya)
 
 # --- Settings & validation -------------------------------------------------
 pydantic>=2.13.4
-pydantic-settings>=2.11.0
+pydantic-settings>=2.16.3
 
 # --- Utilities -------------------------------------------------------------
 PyJWT[crypto]>=2.10.1           # sessiya tokenlari
