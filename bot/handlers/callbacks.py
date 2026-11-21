@@ -26,6 +26,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    WebAppInfo,
 )
 
 from bot import texts
@@ -308,10 +309,20 @@ async def on_file_play(
         await _alert(callback, "This file cannot be played inline - use Download.")
         return
 
-    ticket = share.issue_stream_ticket(record.id, user.telegram_id, purpose="play")
-    player_url = f"{settings.web.web_app_url or settings.app.base_url}/?player=1&ticket={ticket.token}"
-    await callback.answer(
-        f"Opening the player…\n{player_url}", show_alert=True, cache_time=10
+    # Pleer Mini App ichida ochiladi: ``?play=<id>`` — ilova kirgach faylni
+    # darhol ijro etadi. Avval havola alert oynasiga yozilardi: Telegram alert
+    # matnini 200 belgi bilan cheklaydi (MESSAGE_TOO_LONG) va havola bosilmasdi.
+    base = (settings.web.web_app_url or f"{settings.app.base_url}/index.html").split("?", 1)[0]
+    if not base.startswith("https://"):
+        await _alert(callback, "Pleer hozir mavjud emas — faylni yuklab oling.")
+        return
+    player_url = f"{base}?play={record.id}"
+    await callback.answer()
+    await callback.message.answer(
+        f"▶️ <b>{escape_html(truncate_middle(record.file_name or 'Media', 60))}</b>",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="▶️ Pleerda ochish", web_app=WebAppInfo(url=player_url))]]
+        ),
     )
 
 

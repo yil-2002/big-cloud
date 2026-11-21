@@ -5436,6 +5436,23 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
       var token = extractShareToken(String(payload).trim());
       if (token) await openSharedToken(token);
     }
+    await openPlayFromUrl();
+  }
+
+  /** Botdagi "Pleerda ochish" tugmasi: ``?play=<fayl id>`` — darhol ijro. */
+  var playFromUrlDone = false;
+  async function openPlayFromUrl() {
+    if (playFromUrlDone) return;
+    var fileId = "";
+    try { fileId = new URLSearchParams(window.location.search).get("play") || ""; } catch (e) { fileId = ""; }
+    if (!/^[A-Za-z0-9-]{8,64}$/.test(fileId)) return;
+    playFromUrlDone = true;
+    try {
+      var file = await api("/files/" + encodeURIComponent(fileId));
+      if (file && file.id) await playFile(file);
+    } catch (error) {
+      toast((error && error.message) || "Faylni ochib bo'lmadi", "error", 3800);
+    }
   }
 
   function readStartParamFromUrl() {
@@ -9011,6 +9028,7 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
       var token = extractShareToken(String(state.startParam));
       if (token) await openSharedToken(token);
     }
+    await openPlayFromUrl();
   }
 
   // Ilova ko'rinadigan API'larni tekshirib, ishga tushadi

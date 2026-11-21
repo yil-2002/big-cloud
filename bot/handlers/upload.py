@@ -182,19 +182,27 @@ async def _archive(
     if vault is None or not vault.enabled:
         return None
 
+    # MUHIM: ORM qiymatlari shu yerda (handler sessiyasi ochiq paytda) oddiy
+    # o'zgaruvchilarga ko'chiriladi. Fon vazifasi sessiya yopilgandan keyin
+    # ishlaydi; u yerda ``record.file_name`` kabi atributni o'qish SQLAlchemy'ni
+    # async kontekstdan tashqarida qayta yuklashga majburlaydi va arxivlash
+    # ``MissingGreenlet`` bilan yiqiladi (fayl kanalga nusxalanmay qoladi).
+    file_uuid, telegram_id = record.id, user.telegram_id
+    file_name, caption = record.file_name, record.caption
+
     async def _do_archive() -> ArchiveResult:
         res = await vault.archive_message(
             message,
-            file_uuid=record.id,
-            telegram_id=user.telegram_id,
-            file_name=record.file_name,
-            caption=record.caption,
+            file_uuid=file_uuid,
+            telegram_id=telegram_id,
+            file_name=file_name,
+            caption=caption,
         )
         if res.ok:
             try:
                 await message.delete()
             except Exception as exc:
-                logger.warning("service message cleanup failed for %s: %s", user.telegram_id, exc)
+                logger.warning("service message cleanup failed for %s: %s", telegram_id, exc)
         return res
 
     if not settings.archive.blocking:
@@ -277,18 +285,22 @@ async def store_from_message(
     if archive and stored.is_new:
         vault: ArchiveVault | None = get_vault(settings=settings)
         if vault is not None and vault.enabled:
+            # Qiymatlar fon vazifasidan oldin ko'chiriladi (yuqoridagi izohga qarang).
+            file_uuid, telegram_id = stored.record.id, user.telegram_id
+            file_name, caption = stored.record.file_name, stored.record.caption
+
             async def _do_archive_store():
                 res = await vault.archive_message(
                     message,
-                    file_uuid=stored.record.id,
-                    telegram_id=user.telegram_id,
-                    file_name=stored.record.file_name,
-                    caption=stored.record.caption,
+                    file_uuid=file_uuid,
+                    telegram_id=telegram_id,
+                    file_name=file_name,
+                    caption=caption,
                 )
                 if res.ok:
                     try:
                         await message.delete()
                     except Exception as exc:
-                        logger.warning("service message cleanup failed for %s: %s", user.telegram_id, exc)
+                        logger.warning("service message cleanup failed for %s: %s", telegram_id, exc)
             vault.schedule(_do_archive_store)
     return stored.record
