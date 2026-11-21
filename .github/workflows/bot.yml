@@ -1,0 +1,82 @@
+# ===========================================================================
+# hugecloud — botni GitHub Actions'da 24/7 ishlatish (VPS'siz)
+#
+# Har bir run ~5 soat 45 daqiqa ishlaydi (GitHub limiti 6 soat), oxirida
+# keyingi runni o'zi navbatga qo'yadi. `concurrency` tufayli bir vaqtda faqat
+# bitta bot ishlaydi; soatlik cron esa run yiqilsa ham botni qayta tiklaydi.
+#
+# Sozlash: DEPLOY_GITHUB_CLOUDFLARE.md
+# ===========================================================================
+name: bot
+
+on:
+  schedule:
+    - cron: "23 * * * *"     # zaxira: bot o'chib qolsa, ko'pi bilan 1 soatda qaytadi
+  workflow_dispatch: {}
+
+concurrency:
+  group: hugecloud-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write             # keyingi runni `gh workflow run` bilan navbatga qo'yish
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358
+    env:
+      # --- Maxfiy qiymatlar (Settings -> Secrets and variables -> Actions) ---
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      ORIGIN_SECRET: ${{ secrets.ORIGIN_SECRET }}
+      ADMIN_ID: ${{ secrets.ADMIN_ID }}
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      ARCHIVE_CHANNEL_ID: ${{ secrets.ARCHIVE_CHANNEL_ID }}
+      TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+      TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
+      # --- Oddiy qiymatlar (Variables bo'limi) --------------------------------
+      PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+      BOT_USERNAME: ${{ vars.BOT_USERNAME }}
+      LOG_LEVEL: ${{ vars.LOG_LEVEL || 'WARNING' }}   # ommaviy repo: loglar hammaga ko'rinadi
+      RUN_SECONDS: ${{ vars.RUN_SECONDS || '20700' }}
+      # --- Doimiy sozlamalar --------------------------------------------------
+      APP_ENV: production
+      APP_LANGUAGE: uz
+      RUN_MODE: all
+      WEBHOOK_ENABLED: "false"
+      BOT_DROP_PENDING_UPDATES: "false"   # runlar orasidagi 1-2 daqiqada kelgan xabarlar yo'qolmasin
+      API_DOCS_ENABLED: "false"
+      DB_POOL_SIZE: "3"
+      DB_MAX_OVERFLOW: "2"
+      DB_AUTO_CREATE: "true"
+      DB_AUTO_MIGRATE: "true"
+      REDIS_REQUIRED: "false"
+      REDIS_URL: redis://127.0.0.1:6379/0  # yo'q — avtomatik in-memory keshga o'tadi
+      MT_SESSION_PATH: data/mtproto-bot.session
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_WORKFLOW_REF_FILE: bot.yml
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install cloudflared
+        run: |
+          curl -fsSL -o /tmp/cloudflared.deb \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i /tmp/cloudflared.deb
+          cloudflared --version
+
+      - name: Run bot
+        run: bash scripts/gha_run.sh

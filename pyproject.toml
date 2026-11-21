@@ -1,0 +1,48 @@
+# ---------------------------------------------------------------------------
+# Loyiha konfiguratsiyasi: ruff (lint/format) sozlamalari.
+#
+# pytest sozlamalari `pytest.ini` da (ikkilangan konfiguratsiya bo'lmasligi uchun).
+# Lint: `make lint` → compileall + import tekshiruvi + (ruff o'rnatilgan bo'lsa) ruff.
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+# Qator uzunligi: hujjatlash va log satrlari uzun bo'lishi mumkin.
+line-length = 120
+target-version = "py311"
+extend-exclude = [
+    "data",        # SQLite fayllari va backup'lar
+    "dist",
+    "old-bot",     # legacy repo (aloohida loyiha)
+    ".venv",
+]
+
+[tool.ruff.lint]
+# Bu yerda `select` ataylab **bo'sh qoldirilgan**: ruff'ning kengaytirilgan
+# qoidalar to'plami ishlatiladi va faqat quyidagi istisnolar o'chiriladi.
+# Maqsad: yangi xato sinflarini (F821, F841, B006 …) avtomatik ushlash.
+ignore = [
+    # --- Loyiha qasddan qiladigan xatti-harakatlar (har biri izohlangan) ----
+    # "Chidamli" xato qayta ishlash: bot/API hech qachon bitta xato tufayli
+    # o'chib qolmasligi kerak (Telegram retry storm, polling backoff, webhook).
+    "BLE001",  # BLE001 - `except Exception` har doim izoh bilan, qasddan
+    # Matn modullarida (`bot/texts*.py`) ko'p qatorli o'zbekcha satrlar yonma-yon
+    # string'lar bilan yoziladi — bu o'qishni va diff'ni osonlashtiradi.
+    "ISC004",  # ISC004 - matn modullaridagi ko'p qatorli satrlar
+    # `logging.exception(..., exc)` ba'zan qasddan: kontekst + traceback bitta yozuvda.
+    "TRY401",  # TRY401 - xato obyekti log xabarida qatnashishi mumkin
+    # `main.py` va `scripts/migrate.py` shebang'li, lekin `python main.py` orqali
+    # chaqiriladi (PaaS/Docker CMD shunday) — bajarilish bitini talab qilmaslik.
+    "EXE001",  # EXE001 - shebang bor, `python ...` orqali chaqiriladi
+    # Hujjatlar, log satrlari va emoji'li UI matnlari uchun qator uzunligi erkin.
+    "E501",  # E501 - qator uzunligi (line-length faqat format uchun)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Testlarda keng `except Exception` bilan xato turini tekshirish odatiy hol.
+"tests/*" = ["S101", "PLR2004", "ANN"]
+# Migratsiya skripti: DDL ustida ishlaydi, `try/except pass` qatlamlari bor.
+"scripts/migrate.py" = ["S110"]
+
+[tool.ruff.format]
+quote-style = "double"
+line-ending = "lf"

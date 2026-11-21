@@ -1,22 +1,102 @@
+# ===========================================================================
+# Render Blueprint — hugecloud (Telegram Cloud Bot + API + Mini App)
+#
+# Ishlatish: Render → New → Blueprint → shu faylni tanlang.
+# Keyin Environment bo'limida BOT_TOKEN / ADMIN_ID / ARCHIVE_CHANNEL_ID ni
+# to'ldiring (yoki GitHub Secrets orqali bering).
+#
+# MUHIM: Telegram boti uchun **bitta** jarayon kerak. Web Service webhook
+# rejimida ishlaydi (Telegram update'larni o'zi yuboradi) — shuning uchun
+# polling uchun alohida worker kerak emas va 409 Conflict bo'lmaydi.
+# ===========================================================================
+databases:
+  - name: hugecloud-db
+    plan: free                 # production uchun: starter yoki yuqoriroq
+    databaseName: hugecloud
+    user: hugecloud
+    postgresMajorVersion: 16
+
 services:
   - type: web
-    name: telegram-cloud-bot
-    runtime: docker
+    name: hugecloud
+    runtime: python
     plan: free
+    region: frankfurt          # O'zbekiston/Rossiya uchun eng yaqin
+    buildCommand: pip install -r requirements.txt
+    # Webhook rejimi: HTTP port orqali ham API, ham Telegram update'lari.
+    startCommand: python scripts/migrate.py --backup && python main.py --mode all
+    healthCheckPath: /healthz
+    autoDeploy: true
     envVars:
+      - key: RUN_MODE
+        value: all
+      - key: APP_ENV
+        value: production
+      - key: APP_LANGUAGE
+        value: uz
+      - key: LOG_LEVEL
+        value: INFO
+      # --- Maxfiy qiymatlar (Render'da to'ldiriladi) -----------------------
       - key: BOT_TOKEN
         sync: false
-      - key: ADMIN_PASSWORD
+      - key: BOT_USERNAME
         sync: false
       - key: ADMIN_ID
         sync: false
+      - key: ARCHIVE_CHANNEL_ID
+        sync: false
+      # --- Webhook: tashqi HTTPS manzil ------------------------------------
+      - key: WEBHOOK_ENABLED
+        value: "true"
+      - key: WEBHOOK_URL
+        fromService:
+          name: hugecloud
+          type: web
+          property: hostport    # https://hugecloud.onrender.com
+      - key: WEBHOOK_PATH
+        value: /api/webhook
+      - key: WEBHOOK_SECRET
+        generateValue: true     # Render tasodifiy qiymat yaratadi
+      - key: JWT_SECRET
+        generateValue: true     # bo'sh qoldirilsa BOT_TOKEN'dan hosil qilinadi
+      # --- Baza va kesh -----------------------------------------------------
       - key: DATABASE_URL
         fromDatabase:
-          name: bot-postgres
+          name: hugecloud-db
           property: connectionString
-    healthCheckPath: /
+      - key: DB_AUTO_MIGRATE
+        value: "true"
+      - key: DB_AUTO_CREATE
+        value: "false"          # migratsiya skripti bajaradi
+      # Redis ixtiyoriy: bo'lmasa in-memory kesh ishlaydi
+      - key: REDIS_REQUIRED
+        value: "false"
+      # --- Bepul tarif: uxlab qolmasligi uchun ------------------------------
+      - key: STORAGE_QUOTA
+        value: "0"              # 0 = Cheksiz (Unlimited)
+      - key: SERVE_WEB
+        value: "true"
+      - key: WEB_MOUNT_PATH
+        value: /
+      - key: API_DOCS_ENABLED
+        value: "false"          # production'da /docs yopiq
+      - key: CORS_ORIGINS
+        value: "*"              # aniq domen bilan almashtirish yaxshiroq
 
-databases:
-  - name: bot-postgres
-    plan: free
-    ipAllowList: []
+  # ---------------------------------------------------------------------------
+  # Ixtiyoriy: bepul tarifda servis uxlab qolishining oldini oluvchi cron.
+  # (Polling rejimida ishlatilsa — WEBHOOK_ENABLED=false qilib, shu job kerak.)
+  # ---------------------------------------------------------------------------
+  - type: cron
+    name: hugecloud-keepalive
+    runtime: image
+    image:
+      url: curlimages/curl:latest
+    schedule: "*/10 * * * *"
+    startCommand: curl -fsS --max-time 50 "$PING_URL/healthz" || exit 1
+    envVars:
+      - key: PING_URL
+        fromService:
+          name: hugecloud
+          type: web
+          property: hostport

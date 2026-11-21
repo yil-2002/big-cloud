@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# systemd unit: hugecloud (Telegram Cloud Bot + API)
+#
+# O'rnatish:  sudo bash deploy/systemd-install.sh
+# Boshqarish: sudo systemctl {start,stop,restart,status} hugecloud
+# Loglar:     sudo journalctl -u hugecloud -n 100 -f
+# ---------------------------------------------------------------------------
+[Unit]
+Description=hugecloud - Telegram Cloud Storage Bot + FastAPI
+Documentation=https://github.com/yil-2002/telegram-cloud-bot
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Kod va .env joylashgan papka (o'zingizniki bilan almashtiring)
+WorkingDirectory=/root/big-cloud
+EnvironmentFile=/root/big-cloud/.env
+# RUN_MODE=all -> ham HTTP port, ham bot polling bitta jarayonda
+ExecStart=/usr/bin/python3 /root/big-cloud/main.py --mode all
+Restart=always
+RestartSec=5
+# Cheksiz fayl = ko'p ulanish; limitni oshiramiz
+LimitNOFILE=65535
+# Xavfsizlik: imkon qadar kam huquq
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=read-only
+RestrictSUIDSGID=true
+# Loglar journald'ga tushadi (journalctl -u hugecloud)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hugecloud
+
+[Install]
+WantedBy=multi-user.target

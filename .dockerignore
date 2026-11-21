@@ -1,0 +1,32 @@
+# ---------------------------------------------------------------------------
+# Obrazga kirmasligi kerak bo'lgan fayllar (kichik obraz + maxfiylik)
+# ---------------------------------------------------------------------------
+.git
+.gitignore
+.github
+.env
+.env.*
+!.env.example
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+*.sqlite3
+*.sqlite3-*
+data/
+dist/
+build/
+*.egg-info
+# Hujjatlar obrazga kerak emas (lekin CI'da testlar kerak bo'lishi mumkin,
+# shuning uchun tests/ va requirements-dev.txt CHIQARILMAYDI).
+README.md
+PROGRESS.md
+Dockerfile
+docker-compose.yml
+Makefile

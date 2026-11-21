@@ -1,11 +1,21 @@
 .env
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+# VPS'da ishlaydigan baza va uning zaxiralari (foydalanuvchi ma'lumoti —
+# hech qachon repoga tushmasligi kerak).
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+data/
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 venv/
 .venv/
-*.sqlite3
-.DS_Store
+dist/
+
+# graphify kod grafi artefaktlari (19 MB, repoga kirmasin)
+graphify-out/

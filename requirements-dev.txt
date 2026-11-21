@@ -1,0 +1,12 @@
+# ---------------------------------------------------------------------------
+# Ishlab chiqarish/test uchun qo'shimcha bog'liqliklar:
+#   pip install -r requirements.txt -r requirements-dev.txt
+# ---------------------------------------------------------------------------
+-r requirements.txt
+
+pytest>=8.3.0            # test runner
+pytest-asyncio>=0.24.0   # async testlar (asyncio_mode = auto)
+pytest-cov>=5.0.0        # qamrov hisoboti
+ruff>=0.6.0              # lint + format
+mypy>=1.11.0             # statik tiplarni tekshirish
+PyYAML>=6.0              # render.yaml / docker-compose.yml / workflow validatsiyasi

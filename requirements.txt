@@ -1,4 +1,43 @@
-aiogram==2.23.1
-asyncpg
-aiohttp
-cachetools==5.3.2
+# ---------------------------------------------------------------------------
+# hugecloud — Telegram Cloud Drive (Bot + API + Mini App)
+# Python 3.11+   |   O'rnatish:  pip install -r requirements.txt
+#
+# Versiyalar "eng kichik sinovdan o'tgan" (minimum) ko'rinishida berilgan:
+# shu va undan yangi patch/minor versiyalar ishlaydi. Aniq takrorlanadigan
+# build kerak bo'lsa:  pip freeze > requirements.lock
+# ---------------------------------------------------------------------------
+
+# --- Bot framework ---------------------------------------------------------
+aiogram>=3.31.0,<4              # async Telegram Bot API framework (v3)
+aiohttp>=3.13.2                 # aiogram ishlatadigan HTTP klient
+
+# --- Web API ---------------------------------------------------------------
+fastapi>=0.141.1                # REST API + Mini App uchun ASGI framework
+uvicorn[standard]>=0.52.4       # ASGI server (production)
+python-multipart>=0.0.20        # multipart/form-data (fayl yuklash)
+email-validator>=2.3.0          # EmailStr validatsiyasi
+
+# --- MTProto ---------------------------------------------------------------
+telethon==1.41.0                # Katta media oqim qilish uchun MTProto klient
+
+# --- Database --------------------------------------------------------------
+SQLAlchemy[asyncio]>=2.0.52     # 2.0 stilidagi async ORM (Mapped/mapped_column)
+asyncpg>=0.30.0                 # PostgreSQL async drayveri (production)
+aiosqlite>=0.21.0               # SQLite async drayveri (dev/test)
+alembic>=1.16.5                 # sxema migratsiyalari (scripts/migrate.py bilan birga)
+
+# --- Cache / rate limiting -------------------------------------------------
+redis[hiredis]>=8.1.0           # async Redis klient (kesh + limit + sessiya)
+
+# --- Settings & validation -------------------------------------------------
+pydantic>=2.13.4
+pydantic-settings>=2.11.0
+
+# --- Utilities -------------------------------------------------------------
+PyJWT[crypto]>=2.10.1           # sessiya tokenlari
+httpx>=0.28.1                   # media stream proxy (Range support)
+python-dotenv>=1.2.1            # .env yuklash
+orjson>=3.11.3                  # tezkor JSON (ixtiyoriy, tavsiya etiladi)
+
+# --- Testlar (ixtiyoriy) ---------------------------------------------------
+# pip install -r requirements-dev.txt

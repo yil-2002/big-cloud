@@ -1,0 +1,17 @@
+# Cloudflare Worker: hugecloud uchun doimiy manzil (https://hugecloud.<subdomain>.workers.dev)
+# Deploy: GitHub Actions -> "deploy-worker" (yoki lokal: npx wrangler deploy -c cloudflare/wrangler.toml)
+name = "hugecloud"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "ORIGIN_STORE"
+class_name = "OriginStore"
+
+# Bepul tarifda faqat SQLite asosidagi Durable Object'lar ishlaydi.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["OriginStore"]
+
+# Maxfiy qiymat (wrangler secret put ORIGIN_SECRET) — deploy workflow o'zi qo'yadi.

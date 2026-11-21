@@ -1,0 +1,40 @@
+# ===========================================================================
+# Cloudflare Worker'ni deploy qilish (doimiy manzil: hugecloud.<siz>.workers.dev)
+#
+# Kerakli secret'lar: CLOUDFLARE_API_TOKEN ("Edit Cloudflare Workers" shabloni),
+#                     CLOUDFLARE_ACCOUNT_ID, ORIGIN_SECRET
+# cloudflare/ papkasi o'zgarganda avtomatik, yoki qo'lda (Run workflow).
+# ===========================================================================
+name: deploy-worker
+
+on:
+  push:
+    branches: [main]
+    paths: ["cloudflare/**", ".github/workflows/deploy-worker.yml"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Deploy Worker
+        working-directory: cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ORIGIN_SECRET: ${{ secrets.ORIGIN_SECRET }}
+        run: |
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "::error::CLOUDFLARE_API_TOKEN secret yo'q"; exit 1; }
+          [ -n "$ORIGIN_SECRET" ] || { echo "::error::ORIGIN_SECRET secret yo'q"; exit 1; }
+          npx --yes wrangler@4 deploy
+          printf '%s' "$ORIGIN_SECRET" | npx --yes wrangler@4 secret put ORIGIN_SECRET

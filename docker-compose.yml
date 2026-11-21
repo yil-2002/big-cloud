@@ -1,0 +1,64 @@
+# ---------------------------------------------------------------------------
+# hugecloud — to'liq stek: PostgreSQL + Redis + bot/API
+#
+#   docker compose up -d --build      # ishga tushirish
+#   docker compose logs -f app        # kuzatish
+#   docker compose exec app python scripts/migrate.py   # sxemani yangilash
+# ---------------------------------------------------------------------------
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hugecloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hugecloud}
+      POSTGRES_DB: ${POSTGRES_DB:-hugecloud}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hugecloud} -d ${POSTGRES_DB:-hugecloud}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # .env'dagi qiymatlarni konteyner ichidagi manzillarga almashtiramiz
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hugecloud}:${POSTGRES_PASSWORD:-hugecloud}@postgres:5432/${POSTGRES_DB:-hugecloud}
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: ${APP_ENV:-production}
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - app_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_data:
