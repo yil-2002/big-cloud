@@ -75,6 +75,29 @@ fi
 export PORT API_PORT="$PORT" API_HOST=127.0.0.1
 mkdir -p data
 
+# --- 0.5 Telegram tekshiruvi: token, webhook ----------------------------------
+TG_API="${TG_API_BASE:-https://api.telegram.org}/bot$BOT_TOKEN"
+tg_json() {  # tg_json <json> <python ifoda d=javob> — JSON'ni ishonchli o'qish
+  printf '%s' "$1" | python3 -c "import json,sys
+try: d=json.load(sys.stdin)
+except Exception: d={}
+print($2)"
+}
+me=$(curl -sS --max-time 20 "$TG_API/getMe" 2>&1 || true)
+if [ "$(tg_json "$me" "d.get('ok') is True")" = "True" ]; then
+  log "Bot: @$(tg_json "$me" "d['result'].get('username','')")"
+else
+  die "BOT_TOKEN noto'g'ri yoki Telegram javob bermadi: $(tg_json "$me" "d.get('description','javob yo\'q')")"
+fi
+# Eski (Render/VPS) webhook qolgan bo'lsa polling update olmaydi — bot jim qoladi.
+hook=$(curl -sS --max-time 20 "$TG_API/getWebhookInfo" 2>&1 || true)
+if [ -n "$(tg_json "$hook" "(d.get('result') or {}).get('url','')")" ]; then
+  echo "::warning::Botda eski webhook o'rnatilgan edi — o'chirildi (polling ishlashi uchun)"
+  curl -sS --max-time 20 "$TG_API/deleteWebhook?drop_pending_updates=false" >/dev/null || true
+else
+  log "Webhook yo'q — polling rejimi"
+fi
+
 # --- 1. Baza ------------------------------------------------------------------
 db_backup() {
   [ "$DB_MODE" = "telegram" ] || return 0
@@ -226,10 +249,22 @@ deadline=$(( $(date +%s) + RUN_SECONDS ))
 next_sync=$(( $(date +%s) + DB_SYNC_SECONDS ))
 tunnel_fails=0
 app_restarts=0
+log_offset=0
+# Ilova logidagi yangi ogohlantirish/xatolarni Actions logiga chiqarish.
+flush_app_log() {
+  [ -f "$APP_LOG" ] || return 0
+  local size; size=$(wc -c <"$APP_LOG")
+  if [ "$size" -gt "$log_offset" ]; then
+    tail -c +"$((log_offset + 1))" "$APP_LOG" | grep -E "WARNING|ERROR|CRITICAL|Traceback" | tail -n 30
+    log_offset=$size
+  fi
+}
 log "Bot ishlayapti. Tugash vaqti: $(date -u -d "@$deadline" +%H:%M) UTC"
 
+flush_app_log
 while [ "$(date +%s)" -lt "$deadline" ]; do
   sleep 60
+  flush_app_log
   # Ilova yiqilgan bo'lsa — qayta ishga tushirish (ko'pi bilan 5 marta).
   if ! kill -0 "$APP_PID" 2>/dev/null; then
     app_restarts=$((app_restarts + 1))
