@@ -12,7 +12,7 @@ aiogram>=3.31.0,<4              # async Telegram Bot API framework (v3)
 aiohttp>=3.13.2                 # aiogram ishlatadigan HTTP klient
 
 # --- Web API ---------------------------------------------------------------
-fastapi>=0.141.1                # REST API + Mini App uchun ASGI framework
+fastapi>=0.165.0                # REST API + Mini App uchun ASGI framework
 uvicorn[standard]>=0.52.4       # ASGI server (production)
 python-multipart>=0.0.20        # multipart/form-data (fayl yuklash)
 email-validator>=2.3.0          # EmailStr validatsiyasi
