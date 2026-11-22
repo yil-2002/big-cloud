@@ -73,7 +73,8 @@ def test_github_workflow_is_valid() -> None:
     assert job["timeout-minutes"] <= 360
     assert job["env"]["WEBHOOK_ENABLED"] == "false"
     assert job["env"]["BOT_DROP_PENDING_UPDATES"] == "false"
-    assert any(step.get("run") == "bash scripts/gha_run.sh" for step in job["steps"])
+    # ``exec`` — Cancel signali skriptning o'ziga yetib borishi (zaxira trap'i) uchun.
+    assert any(step.get("run") == "exec bash scripts/gha_run.sh" for step in job["steps"])
     assert (ROOT / "scripts" / "gha_run.sh").exists()
     # Minimal rejim: baza yopiq kanalda, Postgres ixtiyoriy.
     assert "ARCHIVE_CHANNEL_ID" in job["env"]

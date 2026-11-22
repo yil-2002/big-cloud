@@ -84,4 +84,7 @@ jobs:
           cloudflared --version
 
       - name: Run bot
-        run: bash scripts/gha_run.sh
+        # `exec`: skript step jarayonining O'ZI bo'ladi. Aks holda GitHub "Cancel"
+        # signali faqat tashqi bash'ga boradi, skriptning trap'i ishlamaydi va
+        # to'xtashdagi baza zaxirasi bajarilmay qoladi.
+        run: exec bash scripts/gha_run.sh
