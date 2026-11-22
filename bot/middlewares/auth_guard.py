@@ -88,6 +88,7 @@ ALLOWED_COMMANDS: frozenset[str] = frozenset(
         "/login",
         "/register",
         "/logout",
+        "/profiles",
         "/cancel",
         "/help",
         "/id",

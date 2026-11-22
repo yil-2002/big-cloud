@@ -335,8 +335,10 @@ async def upload_file(
 
         # 5) Telegram'ga uzatish — fayl foydalanuvchi chatiga qaytadi.
         try:
+            # Chaqiruvchining HAQIQIY chati (aktiv profil ID si sintetik bo'lishi mumkin).
+            caller_chat = int(getattr(request.state, "caller_telegram_id", None) or user.telegram_id)
             sent = await bot.send_document(
-                chat_id=user.telegram_id,
+                chat_id=caller_chat,
                 document=FSInputFile(tmp_path, filename=safe_name),
             )
         except Exception as exc:  # Telegram xatosi (forbidden, too large, tarmoq)
@@ -380,7 +382,7 @@ async def upload_file(
             )
             if result.ok:
                 try:
-                    await bot.delete_message(chat_id=user.telegram_id, message_id=sent.message_id)
+                    await bot.delete_message(chat_id=caller_chat, message_id=sent.message_id)
                 except Exception as exc:
                     logger.warning("service message cleanup failed for %s: %s", user.telegram_id, exc)
     finally:

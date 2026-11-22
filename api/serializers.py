@@ -62,7 +62,8 @@ def serialize_user(user: User, settings: Settings, *, is_admin: bool | None = No
         is_premium=bool(user.is_premium),
         is_admin=admin,
         login=user.login,
-        is_authenticated=bool(user.is_authenticated),
+        # Sessiya boshqa Telegram'da ochilgan bo'lsa ``False`` (Mini App login ekrani).
+        is_authenticated=bool(user.is_signed_in),
         is_blocked=bool(user.is_blocked),
         full_name=user.display_name,
         storage_used=used,

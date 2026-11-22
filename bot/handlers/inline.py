@@ -122,7 +122,7 @@ async def on_inline_query(
     limit = settings.storage.inline_results_limit
 
     # Autentifikatsiya: hisob tasdiqlanmagan bo'lsa inline qidiruv ishlamaydi.
-    if settings.auth.required and not user.is_authenticated and not settings.bot.is_admin(
+    if settings.auth.required and not user.is_signed_in and not settings.bot.is_admin(
         user.telegram_id
     ):
         await inline_query.answer(

@@ -1496,7 +1496,9 @@ class StorageService:
             conditions.append(User.is_blocked.is_(False))
         if only_authenticated:
             conditions.append(User.is_authenticated.is_(True))
-        statement = select(User.telegram_id)
+        # Faqat haqiqiy Telegram foydalanuvchilari: qo'shimcha profillarning
+        # ID si manfiy sintetik son (chat emas) — ularga xabar yuborib bo'lmaydi.
+        statement = select(User.telegram_id).where(User.telegram_id > 0)
         for condition in conditions:
             statement = statement.where(condition)
         return [int(row) for row in (await self.session.scalars(statement)).all()]

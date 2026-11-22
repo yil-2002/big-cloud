@@ -251,6 +251,7 @@ BOT_COMMANDS: tuple[tuple[str, str], ...] = (
     ("register", "Hisob ochish: /register login parol"),
     ("login", "Tizimga kirish: /login login parol"),
     ("logout", "Tizimdan chiqish"),
+    ("profiles", "Profillar: ro'yxat va almashtirish"),
     ("password", "Parolni almashtirish"),
     ("id", "Telegram ID ni ko'rish"),
     ("cancel", "Joriy amalni bekor qilish"),

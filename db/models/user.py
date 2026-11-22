@@ -92,6 +92,18 @@ class User(Base, TimestampMixin):
     #: ``True`` once the user authenticated with :mod:`bot.handlers.auth`.
     #: The auth-guard middleware refuses cloud features while this is false.
     is_authenticated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # --- ko'p profilli sessiyalar ---------------------------------------------
+    #: (Telegram foydalanuvchisining o'z qatorida) hozir qaysi profilda
+    #: ishlayapti. ``None`` — o'z qatori (o'z profili).
+    active_profile_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: (Profil qatorida) bu profil sessiyasini hozir qaysi Telegram ID ushlab
+    #: turibdi. Bitta profil = bitta sessiya: boshqa joydan muvaffaqiyatli
+    #: kirilganda shu maydon almashadi va eski sessiya yakunlanadi.
+    #: ``None`` + ``is_authenticated`` — eski yozuv: egasi qatorning o'zi.
+    session_owner_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: Qo'shimcha profilni yaratgan Telegram ID (``/profiles`` ro'yxati uchun).
+    #: Qo'shimcha profillarning ``telegram_id`` si manfiy (Telegram ID emas).
+    profile_creator_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     #: Consecutive wrong passwords (reset on success).
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     #: Temporary lockout deadline; ``None`` when the account is not locked.
@@ -239,6 +251,34 @@ class User(Base, TimestampMixin):
     def logout(self) -> None:
         """``/logout`` - forget the session but keep the credentials."""
         self.is_authenticated = False
+        self.session_owner_id = None
+
+    # --- ko'p profilli sessiyalar ---------------------------------------------
+    @property
+    def is_extra_profile(self) -> bool:
+        """Qo'shimcha profil (``/register`` bilan ochilgan, Telegram ID emas)."""
+        return int(self.telegram_id) < 0
+
+    @property
+    def session_holder(self) -> int | None:
+        """Profil sessiyasini ushlab turgan Telegram ID (yo'q bo'lsa ``None``)."""
+        if not self.is_authenticated:
+            return None
+        return self.session_owner_id if self.session_owner_id is not None else self.telegram_id
+
+    def has_session_for(self, telegram_id: int) -> bool:
+        """Shu profilning faol sessiyasi aynan ``telegram_id`` dami."""
+        return self.session_holder == telegram_id
+
+    @property
+    def is_signed_in(self) -> bool:
+        """Darvoza qarori: hisob tasdiqlangan **va** sessiya chaqiruvchiniki.
+
+        ``_session_ok`` ni :class:`services.profiles.ProfileService.resolve`
+        qo'yadi (ORM ustuni emas, bazaga yozilmaydi). Middleware ishlamagan
+        joylarda (testlar, skriptlar) eski xatti-harakat saqlanadi.
+        """
+        return bool(self.is_authenticated) and bool(getattr(self, "_session_ok", True))
 
     # --- storage accounting --------------------------------------------------
     def quota(self, default: int) -> int:

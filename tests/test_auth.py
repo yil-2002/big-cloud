@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import func, select
 
-from db.models import AuditAction, AuditLog, File, Folder
+from db.models import AuditAction, AuditLog, File
 from services.auth import AuthOutcome, AuthService, validate_login
 from tests.conftest import make_file
 
@@ -95,267 +95,157 @@ async def test_login_unknown_and_blocked(auth, storage, user) -> None:
     assert blocked.outcome is AuthOutcome.BLOCKED
 
 
-async def test_login_from_other_telegram_id_transfers_account(auth, storage, user) -> None:
-    """Boshqa Telegram ID dan to'g'ri parol — hisob joriy akkauntga o'tadi."""
-    old_id = user.telegram_id
-    await auth.register(old_id, "alisher", "parol123")
-    result = await auth.login("alisher", "parol123", telegram_id=999999)
-    assert result.ok, result.message
-    assert result.user is not None
-    assert result.user.telegram_id == 999999
-    assert result.user.login == "alisher"
-    assert result.user.check_password("parol123") is True
-    # Yangi qator bor, eski qator o'chirilgan.
-    assert await storage.get_user_any(999999) is not None
-    assert await storage.get_user_any(old_id) is None
-
-
-async def test_transfer_moves_files_folders_and_storage_used(auth, storage, user) -> None:
-    """Fayllar, papkalar va ishlatilgan hajm yangi akkauntga o'tadi."""
-    old_id = user.telegram_id
-    new_id = 555001
-    await auth.register(old_id, "alisher", "parol123")
-    folder = await storage.create_folder("Hujjatlar", old_id)
-    record = await make_file(storage, old_id, name="hisobot.pdf", size=2048)
-    await storage.move_file(record.id, old_id, folder.id)
-
-    result = await auth.login("alisher", "parol123", telegram_id=new_id)
-    assert result.ok, result.message
-
-    moved_file = await storage.session.scalar(select(File).where(File.id == record.id))
-    assert moved_file is not None
-    assert moved_file.user_id == new_id
-    assert moved_file.folder_id == folder.id
-
-    moved_folder = await storage.session.get(Folder, folder.id)
-    assert moved_folder is not None
-    assert moved_folder.user_id == new_id
-
-    new_user = await storage.get_user_any(new_id)
-    assert new_user is not None
-    assert new_user.storage_used == 2048
-    assert new_user.login == "alisher"
-
-
-async def test_transfer_removes_old_row_and_can_transfer_back(auth, storage, user) -> None:
-    """Eski qator yo'q; eski ID dan kirish hisobni qaytarib o'tkazadi."""
-    old_id = user.telegram_id
-    await auth.register(old_id, "alisher", "parol123")
-
-    first = await auth.login("alisher", "parol123", telegram_id=888001)
-    assert first.ok and first.user is not None
-    assert first.user.telegram_id == 888001
-    assert await storage.get_user_any(old_id) is None
-
-    back = await auth.login("alisher", "parol123", telegram_id=old_id)
-    assert back.ok and back.user is not None
-    assert back.user.telegram_id == old_id
-    assert await storage.get_user_any(888001) is None
-    assert back.user.check_password("parol123") is True
-
-
-async def test_transfer_preserves_duplicate_file_rows(auth, storage, user) -> None:
-    """Bir xil ``file_unique_id`` bo'lsa ham ikkala fayl qatori saqlanib qoladi."""
-    old_id = user.telegram_id
-    target_id = 888002
-    await auth.register(old_id, "alisher", "parol123")
-    target, _ = await storage.get_or_create_user(telegram_id=target_id, first_name="New")
-    source_file = await make_file(storage, old_id, name="bir.txt", size=100, unique_id="UNIQ-SAME")
-    target_file = await make_file(storage, target.telegram_id, name="bir.txt", size=100, unique_id="UNIQ-SAME")
-
-    result = await auth.login("alisher", "parol123", telegram_id=target_id)
-    assert result.ok, result.message
-
-    rows = list(await storage.session.scalars(select(File).where(File.user_id == target_id)))
-    assert len(rows) == 2, "ikkala fayl qatori ham saqlanishi shart"
-    by_id = {row.id: row for row in rows}
-    # Faylning o'zi (file_id, hajm) o'zgarmagan.
-    assert by_id[source_file.id].file_id == source_file.file_id
-    assert by_id[source_file.id].file_size == 100
-    assert by_id[target_file.id].file_id == target_file.file_id
-    # Unique constraint: ikkala fingerprint endi har xil.
-    fingerprints = {row.file_unique_id for row in rows}
-    assert len(fingerprints) == 2
-    assert "UNIQ-SAME" in fingerprints
-    new_user = await storage.get_user_any(target_id)
-    assert new_user.storage_used == 200
-
-
-async def test_transfer_preserves_duplicate_folder_rows(auth, storage, user) -> None:
-    """Bir xil nomli papka bo'lsa — qator o'chmaydi, nom noyob qilinadi."""
-    old_id = user.telegram_id
-    target_id = 888003
-    await auth.register(old_id, "alisher", "parol123")
-    await storage.get_or_create_user(telegram_id=target_id)
-    old_folder = await storage.create_folder("Rasmlar", old_id)
-    target_folder = await storage.create_folder("Rasmlar", target_id)
-    record = await make_file(storage, old_id, name="rasm.jpg", size=300)
-    await storage.move_file(record.id, old_id, old_folder.id)
-
-    result = await auth.login("alisher", "parol123", telegram_id=target_id)
-    assert result.ok, result.message
-
-    folders = list(await storage.session.scalars(select(Folder).where(Folder.user_id == target_id)))
-    assert len(folders) == 2, "papka qatorlari soni o'zgarmasligi kerak"
-    by_id = {folder.id: folder for folder in folders}
-    assert by_id[target_folder.id].name == "Rasmlar"
-    assert by_id[old_folder.id].name != "Rasmlar"
-    assert by_id[old_folder.id].name.startswith("Rasmlar")
-    moved = await storage.session.scalar(select(File).where(File.id == record.id))
-    assert moved is not None
-    assert moved.folder_id == old_folder.id  # fayl o'z papkasida qoldi
-    assert moved.user_id == target_id
-
-
-async def test_transfer_preserves_folder_tree(auth, storage, user) -> None:
-    """Papka daraxti (parent_id zanjiri) ko'chishdan keyin buzilmaydi."""
-    old_id = user.telegram_id
-    target_id = 888004
-    await auth.register(old_id, "alisher", "parol123")
-    await storage.get_or_create_user(telegram_id=target_id)
-    root = await storage.create_folder("Loyiha", old_id)
-    child = await storage.create_folder("2026", old_id, root.id)
-    grand = await storage.create_folder("Yanvar", old_id, child.id)
-
-    result = await auth.login("alisher", "parol123", telegram_id=target_id)
-    assert result.ok, result.message
-
-    moved_root = await storage.session.get(Folder, root.id)
-    moved_child = await storage.session.get(Folder, child.id)
-    moved_grand = await storage.session.get(Folder, grand.id)
-    assert moved_root.user_id == target_id
-    assert moved_child.parent_id == root.id
-    assert moved_grand.parent_id == child.id
-    assert moved_child.user_id == target_id
-
-
-async def test_transfer_keeps_tree_for_duplicate_folder_name(auth, storage, user) -> None:
-    """Dublikat papka nomi o'zgarsa ham daraxt (parent_id) saqlanadi."""
-    old_id = user.telegram_id
-    target_id = 888005
-    await auth.register(old_id, "alisher", "parol123")
-    await storage.get_or_create_user(telegram_id=target_id)
-    target_root = await storage.create_folder("Loyiha", target_id)
-    old_root = await storage.create_folder("Loyiha", old_id)
-    old_child = await storage.create_folder("2026", old_id, old_root.id)
-
-    result = await auth.login("alisher", "parol123", telegram_id=target_id)
-    assert result.ok, result.message
-
-    moved_root = await storage.session.get(Folder, old_root.id)
-    moved_child = await storage.session.get(Folder, old_child.id)
-    assert moved_root is not None and moved_child is not None
-    assert moved_root.name == "Loyiha (2)"
-    assert moved_child.parent_id == old_root.id  # daraxt buzilmagan
-    assert moved_child.user_id == target_id
-    folders = list(await storage.session.scalars(select(Folder).where(Folder.user_id == target_id)))
-    assert {folder.id for folder in folders} == {target_root.id, old_root.id, old_child.id}
-
-
-async def test_transfer_wrong_password_moves_nothing(auth, storage, user) -> None:
-    """Noto'g'ri parol — rad etiladi va hech narsa ko'chmaydi."""
-    old_id = user.telegram_id
-    target_id = 888006
-    await auth.register(old_id, "alisher", "parol123")
-    record = await make_file(storage, old_id, name="muhim.bin", size=512)
-    folder = await storage.create_folder("Saqlangan", old_id)
-
-    result = await auth.login("alisher", "notogri", telegram_id=target_id)
-    assert result.outcome is AuthOutcome.WRONG_PASSWORD
-
-    still = await storage.get_user_any(old_id)
-    assert still is not None and still.login == "alisher"
-    assert await storage.get_user_any(target_id) is None
-    kept_file = await storage.session.get(File, record.id)
-    kept_folder = await storage.session.get(Folder, folder.id)
-    assert kept_file.user_id == old_id
-    assert kept_folder.user_id == old_id
-
-
-async def test_transfer_writes_audit_record(auth, storage, user) -> None:
-    """O'tkazish audit jurnaliga yozuv qoldiradi."""
-    old_id = user.telegram_id
-    new_id = 888007
-    await auth.register(old_id, "alisher", "parol123")
-    await auth.login("alisher", "parol123", telegram_id=new_id, source="api", ip_address="10.0.0.9")
-
-    rows = list(
-        await storage.session.scalars(select(AuditLog).where(AuditLog.target_id == old_id))
+# --------------------------------------------------------------------------- #
+# Ko'p profilli sessiyalar: profilga o'tish (fayllar KO'CHIRILMAYDI),
+# muvaffaqiyatli logindan keyin eski sessiya yakunlanadi.
+# --------------------------------------------------------------------------- #
+async def _file_count(storage, owner_id: int) -> int:
+    return int(
+        await storage.session.scalar(
+            select(func.count()).select_from(File).where(File.user_id == owner_id)
+        )
+        or 0
     )
-    transferred = [row for row in rows if row.detail and "account transferred" in row.detail]
-    assert transferred, "o'tkazish audit yozuvi topilmadi"
-    entry = transferred[-1]
-    assert entry.actor_id == new_id
-    assert entry.success is True
-    assert entry.source == "api"
-    assert f"from {old_id} to {new_id}" in (entry.detail or "")
 
 
-async def test_transfer_preserves_trashed_duplicate_too(auth, storage, user) -> None:
-    """Savatdagi dublikat ham saqlanadi; faol nusxa yo'qolmaydi."""
-    old_id = user.telegram_id
-    target_id = 888009
-    await auth.register(old_id, "alisher", "parol123")
-    await storage.get_or_create_user(telegram_id=target_id)
-    source_file = await make_file(storage, old_id, name="fayl.bin", size=700, unique_id="UNIQ-TRASH")
-    trashed = await make_file(storage, target_id, name="fayl.bin", size=700, unique_id="UNIQ-TRASH")
-    await storage.delete_file(trashed.id, target_id)
+async def _resolve(storage, telegram_id: int):
+    """Middleware bilan bir xil: Telegram foydalanuvchisining aktiv profili."""
+    from services.profiles import ProfileService
 
-    result = await auth.login("alisher", "parol123", telegram_id=target_id)
+    home = await storage.get_user_any(telegram_id)
+    return await ProfileService(storage.session).resolve(home)
+
+
+async def test_login_from_other_telegram_switches_profile_without_merging(auth, storage, user) -> None:
+    """B Telegram A profiliga kiradi: B o'sha profilga o'tadi, hech narsa birlashmaydi."""
+    a_id, b_id = user.telegram_id, 888
+    await auth.register(a_id, "alisher", "parol123")
+    await make_file(storage, a_id, name="alisher.pdf")
+    await storage.get_or_create_user(telegram_id=b_id, first_name="Bobur")
+    await auth.register(b_id, "bobur", "parol456")
+    await make_file(storage, b_id, name="bobur.pdf")
+
+    result = await auth.login("alisher", "parol123", telegram_id=b_id)
     assert result.ok, result.message
+    assert result.user.telegram_id == a_id              # profil o'zi, ko'chirilmagan
+    assert await storage.get_user_any(a_id) is not None  # qator o'chmagan
+    # Fayllar har profilda alohida qoladi.
+    assert await _file_count(storage, a_id) == 1
+    assert await _file_count(storage, b_id) == 1
 
-    rows = list(await storage.session.scalars(select(File).where(File.user_id == target_id)))
-    assert len(rows) == 2, "ikkala qator ham saqlanishi shart"
-    by_id = {row.id: row for row in rows}
-    assert by_id[trashed.id].deleted_at is not None, "savatdagi holat saqlanadi"
-    assert by_id[source_file.id].deleted_at is None, "faol nusxa yo'qolmaydi"
-    new_user = await storage.get_user_any(target_id)
-    assert new_user.storage_used == 700
+    active_for_b = await _resolve(storage, b_id)
+    assert active_for_b.telegram_id == a_id and active_for_b.is_signed_in
+    # B ning o'z profili ("bobur") sessiyasi yakunlandi.
+    assert (await storage.get_user_any(b_id)).is_authenticated is False
 
 
-async def test_transfer_preserves_row_counts_and_file_fields(auth, storage, user) -> None:
-    """O'tkazishdan oldin/keyin ``files`` va ``folders`` qatorlari soni bir xil."""
-    old_id = user.telegram_id
-    target_id = 888010
-    await auth.register(old_id, "alisher", "parol123")
-    await storage.get_or_create_user(telegram_id=target_id)
+async def test_new_login_ends_the_old_session(auth, storage, user) -> None:
+    """Profilga boshqa joydan kirilsa, eski egasining sessiyasi yakunlanadi."""
+    a_id, b_id = user.telegram_id, 888
+    await auth.register(a_id, "alisher", "parol123")
+    assert (await _resolve(storage, a_id)).is_signed_in
 
-    await storage.create_folder("Papka", old_id)
-    await storage.create_folder("Papka", target_id)
-    source_file = await make_file(storage, old_id, name="a.bin", size=111)
-    await make_file(storage, target_id, name="b.bin", size=222)
-    await make_file(storage, old_id, name="c.bin", size=333, unique_id="UNIQ-COUNT")
-    await make_file(storage, target_id, name="d.bin", size=444, unique_id="UNIQ-COUNT")
+    await storage.get_or_create_user(telegram_id=b_id, first_name="Bobur")
+    assert (await auth.login("alisher", "parol123", telegram_id=b_id)).ok
 
-    files_before = int(await storage.session.scalar(select(func.count()).select_from(File)))
-    folders_before = int(await storage.session.scalar(select(func.count()).select_from(Folder)))
+    kicked = await _resolve(storage, a_id)
+    assert kicked.is_signed_in is False                 # A darvozaga tushadi
+    assert (await _resolve(storage, b_id)).is_signed_in is True
 
-    result = await auth.login("alisher", "parol123", telegram_id=target_id)
+    # A qayta kirsa — endi B ning sessiyasi yakunlanadi.
+    assert (await auth.login("alisher", "parol123", telegram_id=a_id)).ok
+    assert (await _resolve(storage, a_id)).is_signed_in is True
+    b_view = await _resolve(storage, b_id)
+    assert b_view.is_signed_in is False
+
+
+async def test_register_second_profile_is_isolated_and_active(auth, storage, user) -> None:
+    """Hisob bor bo'lsa /register yangi, alohida profil ochadi va unga o'tadi."""
+    a_id = user.telegram_id
+    await auth.register(a_id, "alisher", "parol123")
+    await make_file(storage, a_id, name="asosiy.pdf")
+
+    second = await auth.register(a_id, "ish_profil", "parol789")
+    assert second.ok, second.message
+    profile = second.user
+    assert profile.telegram_id < 0                       # sintetik ID (Telegram ID emas)
+    assert profile.profile_creator_id == a_id
+    assert profile.login == "ish_profil"
+
+    active = await _resolve(storage, a_id)
+    assert active.telegram_id == profile.telegram_id and active.is_signed_in
+    # Oldingi profil sessiyasi yakunlandi, fayllari joyida.
+    assert (await storage.get_user_any(a_id)).is_authenticated is False
+    assert await _file_count(storage, a_id) == 1
+    assert await _file_count(storage, profile.telegram_id) == 0
+    await make_file(storage, profile.telegram_id, name="ish.pdf")
+    assert await _file_count(storage, a_id) == 1
+
+
+async def test_switch_back_and_forth_between_profiles(auth, storage, user) -> None:
+    a_id = user.telegram_id
+    await auth.register(a_id, "alisher", "parol123")
+    extra = (await auth.register(a_id, "ish_profil", "parol789")).user
+
+    assert (await auth.login("alisher", "parol123", telegram_id=a_id)).ok
+    active = await _resolve(storage, a_id)
+    assert active.telegram_id == a_id and active.is_signed_in
+    assert (await storage.get_user_any(extra.telegram_id)).is_authenticated is False
+
+    assert (await auth.login("ish_profil", "parol789", telegram_id=a_id)).ok
+    active = await _resolve(storage, a_id)
+    assert active.telegram_id == extra.telegram_id and active.is_signed_in
+    assert (await storage.get_user_any(a_id)).is_authenticated is False
+
+
+async def test_wrong_password_does_not_switch_profile(auth, storage, user) -> None:
+    a_id, b_id = user.telegram_id, 888
+    await auth.register(a_id, "alisher", "parol123")
+    await storage.get_or_create_user(telegram_id=b_id, first_name="Bobur")
+    await auth.register(b_id, "bobur", "parol456")
+
+    bad = await auth.login("alisher", "noto-gri", telegram_id=b_id)
+    assert bad.outcome is AuthOutcome.WRONG_PASSWORD
+    assert (await _resolve(storage, a_id)).is_signed_in is True     # A tegilmagan
+    b_view = await _resolve(storage, b_id)
+    assert b_view.telegram_id == b_id and b_view.is_signed_in       # B o'z profilida
+
+
+async def test_blocked_telegram_cannot_switch_into_other_profile(auth, storage, user) -> None:
+    a_id, b_id = user.telegram_id, 888
+    await auth.register(a_id, "alisher", "parol123")
+    await storage.get_or_create_user(telegram_id=b_id, first_name="Bobur")
+    await storage.set_blocked(b_id, True, note="spam")
+    result = await auth.login("alisher", "parol123", telegram_id=b_id)
+    assert result.outcome is AuthOutcome.BLOCKED
+    assert (await _resolve(storage, a_id)).is_signed_in is True
+
+
+async def test_login_telegram_switches_profile(auth, storage, user) -> None:
+    a_id = user.telegram_id
+    await auth.register(a_id, "alisher", "parol123")
+    await storage.get_or_create_user(telegram_id=555002, first_name="Yangi")
+    result = await auth.login_telegram(555002, "alisher", "parol123")
     assert result.ok, result.message
-
-    files_after = int(await storage.session.scalar(select(func.count()).select_from(File)))
-    folders_after = int(await storage.session.scalar(select(func.count()).select_from(Folder)))
-    assert files_after == files_before, "hech bir fayl qatori yo'qolmasligi shart"
-    assert folders_after == folders_before, "hech bir papka qatori yo'qolmasligi shart"
-
-    kept = await storage.session.get(File, source_file.id)
-    assert kept is not None and kept.user_id == target_id
-    assert kept.file_id == source_file.file_id
-    assert kept.file_size == 111
-    assert kept.file_name == "a.bin"
+    assert (await _resolve(storage, 555002)).telegram_id == a_id
 
 
-async def test_login_telegram_supports_transfer(auth, storage, user) -> None:
-    """``login_telegram`` ham hisobni o'tkazishni qo'llab-quvvatlaydi."""
-    old_id = user.telegram_id
-    new_id = 888008
-    await auth.register(old_id, "alisher", "parol123")
+async def test_list_profiles_shows_own_profiles(auth, storage, user) -> None:
+    from services.profiles import ProfileService
 
-    result = await auth.login_telegram(new_id, "alisher", "parol123")
-    assert result.ok, result.message
-    assert result.user is not None and result.user.telegram_id == new_id
-    assert await storage.get_user_any(new_id) is not None
-    assert await storage.get_user_any(old_id) is None
+    a_id = user.telegram_id
+    await auth.register(a_id, "alisher", "parol123")
+    await auth.register(a_id, "ish_profil", "parol789")
+    logins = {p.login for p in await ProfileService(storage.session).list_profiles(a_id)}
+    assert logins == {"alisher", "ish_profil"}
+
+
+async def test_login_writes_audit_record(auth, storage, user) -> None:
+    await auth.register(user.telegram_id, "alisher", "parol123")
+    await storage.get_or_create_user(telegram_id=888, first_name="Bobur")
+    assert (await auth.login("alisher", "parol123", telegram_id=888)).ok
+    rows = await storage_rows(user)
+    assert any(r.action == AuditAction.LOGIN_OK and r.actor_id == 888 for r in rows)
 
 
 async def test_logout_and_change_password(auth, user) -> None:

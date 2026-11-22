@@ -265,6 +265,14 @@ async def get_current_user(
             detail=UserNotFoundError(f"User {telegram_id} is not registered").to_dict(),
         )
 
+    # Ko'p profilli sessiyalar: so'rov AKTIV profil bilan bajariladi.
+    # ``telegram_id`` — chaqiruvchining haqiqiy ID si (faylni chatga yuborish,
+    # admin tekshiruvi uchun ``request.state.caller_telegram_id``).
+    from services.profiles import ProfileService
+
+    request.state.caller_telegram_id = telegram_id
+    user = await ProfileService(storage.session).resolve(user)
+
     # --- API darvozalari (bot AuthGuardMiddleware bilan bir xil qoidalar) ----
     # Bloklangan hisob hech qachon o'tmaydi; hisob tasdiqlanmagan (login/parol
     # qilinmagan) bo'lsa esa faqat AUTH_REQUIRED yoqilganda rad etiladi —
@@ -281,10 +289,10 @@ async def get_current_user(
             detail={"code": "blocked", "message": "Hisobingiz bloklangan."},
         )
     is_auth_route = "/auth/" in request.url.path
-    is_admin = settings.bot.is_admin(user.telegram_id)
+    is_admin = settings.bot.is_admin(telegram_id)
     if (
         settings.auth.required
-        and not user.is_authenticated
+        and not user.is_signed_in
         and not is_admin
         and not is_auth_route
     ):

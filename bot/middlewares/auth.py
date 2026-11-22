@@ -37,9 +37,11 @@ from services.storage import StorageService
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["KEY_IS_ADMIN", "KEY_USER", "KEY_USER_SETTINGS", "AuthMiddleware"]
+__all__ = ["KEY_HOME_USER", "KEY_IS_ADMIN", "KEY_USER", "KEY_USER_SETTINGS", "AuthMiddleware"]
 
 KEY_USER = "user"
+#: Telegram foydalanuvchisining o'z qatori (aktiv profil boshqa bo'lishi mumkin).
+KEY_HOME_USER = "home_user"
 KEY_IS_ADMIN = "is_admin"
 KEY_USER_SETTINGS = "user_settings"
 
@@ -96,7 +98,16 @@ class AuthMiddleware(BaseMiddleware):
         if created:
             logger.info("New user registered via middleware: %s", tg_user.id)
 
+        # Ko'p profilli sessiyalar: handler'lar AKTIV profil bilan ishlaydi
+        # (fayllar/papkalar/kvota profilniki). Telegram foydalanuvchisining o'z
+        # qatori ``home_user`` sifatida qoladi (bot bloklandi belgisi va h.k.).
+        home = user
+        from services.profiles import ProfileService
+
+        user = await ProfileService(data["session"]).resolve(home)
+
         is_admin = tg_user.id in self.admin_ids
+        data[KEY_HOME_USER] = home
         data[KEY_USER] = user
         data[KEY_IS_ADMIN] = is_admin
         data[KEY_USER_SETTINGS] = dict(user.settings or {})
@@ -104,14 +115,15 @@ class AuthMiddleware(BaseMiddleware):
         try:
             return await handler(event, data)
         except TelegramForbiddenError:
-            # The user blocked the bot: remember it and stop sending anything.
-            user.is_blocked = True
-            data["session"].add(user)
+            # The user blocked the bot: remember it on the Telegram user's OWN row
+            # (not on a profile they happen to be using).
+            home.is_blocked = True
+            data["session"].add(home)
             try:
                 await data["session"].commit()
             except Exception:  # pragma: no cover
-                logger.debug("Could not persist is_blocked for %s", user.telegram_id)
-            logger.info("User %s blocked the bot", user.telegram_id)
+                logger.debug("Could not persist is_blocked for %s", home.telegram_id)
+            logger.info("User %s blocked the bot", home.telegram_id)
             return None
         except AppError as exc:
             logger.warning("Domain error for %s: %s", user.telegram_id, exc.message)

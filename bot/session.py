@@ -153,11 +153,12 @@ def resolve_session(
 
     # 3) Darvoza o'chirilgan — ochiq bot (legacy xatti-harakat).
     if not gate_enabled:
-        kind = SessionKind.AUTHENTICATED if user.is_authenticated else SessionKind.RETURNING_GUEST
+        kind = SessionKind.AUTHENTICATED if user.is_signed_in else SessionKind.RETURNING_GUEST
         return _allow(kind, is_admin=False, is_first_contact=not has_any_activity)
 
-    # 4) Tasdiqlangan hisob — to'liq ruxsat.
-    if user.is_authenticated:
+    # 4) Tasdiqlangan hisob VA sessiya shu Telegram'niki — to'liq ruxsat.
+    #    (Profil boshqa Telegram'da ochilgan bo'lsa eski sessiya yakunlangan.)
+    if user.is_signed_in:
         return _allow(
             SessionKind.AUTHENTICATED,
             is_admin=False,
@@ -235,6 +236,7 @@ GUEST_COMMANDS: frozenset[str] = frozenset(
         "/login",
         "/register",
         "/logout",
+        "/profiles",
         "/cancel",
         "/help",
         "/id",

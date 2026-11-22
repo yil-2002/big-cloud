@@ -77,6 +77,16 @@ async def _delete_silently(message: Message) -> None:
         logger.debug("Could not delete the password message %s", message.message_id)
 
 
+def _caller_id(message: Message, user: User) -> int:
+    """Chaqiruvchining HAQIQIY Telegram ID si.
+
+    Ko'p profilli rejimda ``user`` — aktiv profil (qo'shimcha profilning ID si
+    manfiy sintetik son). Login/register esa Telegram foydalanuvchisi nomidan
+    bajariladi: aynan u yangi profilga o'tadi.
+    """
+    return message.from_user.id if message.from_user else user.telegram_id
+
+
 def _service(session, storage: StorageService, settings: Settings) -> AuthService:
     """AuthService ni mavjud sessiya/storage bilan qurish."""
     return AuthService(session, storage=storage, settings=settings)
@@ -159,7 +169,7 @@ async def cmd_register(
         )
         return
 
-    result = await service.register(user.telegram_id, login, password)
+    result = await service.register(_caller_id(message, user), login, password)
     if result.ok and result.user is not None:
         await _finish_auth_success(
             message,
@@ -259,9 +269,9 @@ async def on_password_input(
     service = _service(storage.session, storage, settings)
 
     if flow == "login":
-        result = await service.login_telegram(user.telegram_id, login, password)
+        result = await service.login_telegram(_caller_id(message, user), login, password)
     else:
-        result = await service.register(user.telegram_id, login, password)
+        result = await service.register(_caller_id(message, user), login, password)
 
     if result.ok and result.user is not None:
         await _finish_auth_success(
@@ -317,7 +327,7 @@ async def cmd_login(
         )
         return
 
-    result = await service.login_telegram(user.telegram_id, login, password)
+    result = await service.login_telegram(_caller_id(message, user), login, password)
     if result.ok and result.user is not None:
         await _finish_auth_success(
             message,
@@ -335,6 +345,41 @@ async def cmd_login(
     await message.answer(
         result.message or texts.error_generic(), reply_markup=auth_reply_keyboard(user)
     )
+
+
+# ---------------------------------------------------------------------------
+# /profiles — ko'p profilli sessiyalar
+# ---------------------------------------------------------------------------
+@router.message(Command("profiles"))
+async def cmd_profiles(message: Message, user: User, storage: StorageService) -> None:
+    """Profillar ro'yxati: qaysi biri faol va boshqasiga qanday o'tiladi.
+
+    Parollar hech qachon ko'rsatilmaydi; o'tish faqat ``/login`` orqali
+    (login + parol), shuning uchun ro'yxatni ko'rish xavfsiz.
+    """
+    from html import escape
+
+    from services.profiles import ProfileService
+
+    caller = _caller_id(message, user)
+    profiles = await ProfileService(storage.session).list_profiles(caller)
+    lines = ["👤 <b>Profillaringiz</b>", ""]
+    if not profiles:
+        lines.append("Hali profil yo'q.")
+    for profile in profiles:
+        active = profile.telegram_id == user.telegram_id and user.is_signed_in
+        mark = "🟢" if active else "⚪"
+        suffix = " — <i>faol</i>" if active else ""
+        lines.append(f"{mark} <code>{escape(profile.login or '—')}</code>{suffix}")
+    lines += [
+        "",
+        "↪️ Boshqa profilga o'tish: <code>/login login parol</code>",
+        "➕ Yangi profil ochish: <code>/register login parol</code>",
+        "",
+        "<i>Profilga muvaffaqiyatli kirilganda oldingi sessiya yakunlanadi. "
+        "Fayllar har bir profilda alohida saqlanadi.</i>",
+    ]
+    await message.answer("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------

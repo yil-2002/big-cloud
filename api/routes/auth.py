@@ -105,6 +105,13 @@ async def auth_telegram(
     if created:
         logger.info("Mini App registered user %s", tg_user.id)
 
+    # Ko'p profilli sessiyalar: javob aktiv profil haqida; token esa Telegram
+    # foydalanuvchisi nomidan (profil almashsa token yangilanmaydi — keyingi
+    # so'rov avtomatik yangi profilga tushadi).
+    from services.profiles import ProfileService
+
+    user = await ProfileService(storage.session).resolve(user)
+
     # ``start_param`` is the deep-link payload (``?startapp=``) - the front-end
     # uses it to open a shared file straight away, so we echo it back.
     token = await _issue_session_token(
@@ -113,6 +120,7 @@ async def auth_telegram(
         cache=cache,
         settings=settings,
         start_param=parsed.start_param,
+        subject_id=tg_user.id,
     )
 
     return AuthResponse(
@@ -154,6 +162,7 @@ async def logout(
     user: Annotated[User, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings_dep)],
     cache: Annotated[Cache, Depends(get_cache_dep)],
+    storage: Annotated[StorageService, Depends(get_storage_service)],
 ) -> MessageResponse:
     """Close this session for real.
 
@@ -176,7 +185,13 @@ async def logout(
             except Exception:  # chiqish keshga bog'lanmasin
                 logger.warning("Could not record session revocation", exc_info=True)
 
-    return MessageResponse(ok=True, message=f"Session closed for user {user.telegram_id}")
+    # Profil sessiyasi ham yakunlanadi (botdagi /logout bilan bir xil): aks holda
+    # Mini App qayta ochilganda foydalanuvchi o'sha profilga o'zi qaytib kirardi.
+    if user.has_session_for(_caller_id(request, user)):
+        service = AuthService(storage.session, storage=storage, settings=settings)
+        await service.logout(user.telegram_id, source="api")
+
+    return MessageResponse(ok=True, message="Session closed")
 
 
 async def _issue_session_token(
@@ -186,6 +201,7 @@ async def _issue_session_token(
     cache: Cache,
     settings: Settings,
     start_param: str | None = None,
+    subject_id: int | None = None,
 ) -> str:
     """Token yaratadi va uni akkauntning **yagona faol** sessiyasi qilib qo'yadi.
 
@@ -194,8 +210,11 @@ async def _issue_session_token(
     ``GET /auth/devices`` da ko'radi.
     """
     extra = {"start_param": start_param} if start_param else None
+    # Token egasi — Telegram foydalanuvchisi (``subject_id``); Telegram'siz
+    # mijozda profilning o'zi. Aktiv profil har so'rovda qayta aniqlanadi.
+    subject = int(subject_id) if subject_id is not None else int(user.telegram_id)
     token = create_session_token(
-        user.telegram_id, username=user.username, settings=settings, extra_claims=extra
+        subject, username=user.username, settings=settings, extra_claims=extra
     )
     try:
         claims = decode_session_token(token, settings=settings)
@@ -205,7 +224,7 @@ async def _issue_session_token(
     if session_id:
         await register_session(
             cache,
-            user.telegram_id,
+            subject,
             session_id,
             ttl=settings.security.access_token_ttl,
             user_agent=request.headers.get("user-agent"),
@@ -213,6 +232,11 @@ async def _issue_session_token(
             username=user.username,
         )
     return token
+
+
+def _caller_id(request: Request, user: User) -> int:
+    """Sessiya egasi — chaqiruvchining Telegram ID si (aktiv profil ID emas)."""
+    return int(getattr(request.state, "caller_telegram_id", None) or user.telegram_id)
 
 
 def _bearer_token(request: Request) -> str:
@@ -283,7 +307,7 @@ async def register_account(
         )
 
     token = await _issue_session_token(
-        request, result.user, cache=cache, settings=settings
+        request, result.user, cache=cache, settings=settings, subject_id=telegram_id
     )
     return AuthResponse(
         access_token=token,
@@ -351,7 +375,7 @@ async def login_account(
         )
 
     token = await _issue_session_token(
-        request, result.user, cache=cache, settings=settings
+        request, result.user, cache=cache, settings=settings, subject_id=telegram_id
     )
     return AuthResponse(
         access_token=token,
@@ -387,11 +411,11 @@ async def list_devices(
         except AuthError:
             current_sid = ""
     if not current_sid:
-        current_sid = str(await active_session_id(cache, user.telegram_id) or "")
+        current_sid = str(await active_session_id(cache, _caller_id(request, user)) or "")
 
     devices: list[SessionDeviceOut] = []
     try:
-        keys = await cache.backend.keys(f"{device_prefix(user.telegram_id)}*")
+        keys = await cache.backend.keys(f"{device_prefix(_caller_id(request, user))}*")
     except Exception:  # pragma: no cover - kesh yiqilsa bo'sh ro'yxat
         keys = []
     for key in sorted(keys):
@@ -425,16 +449,16 @@ async def revoke_device(
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ) -> MessageResponse:
     """Berilgan sessiyani bekor qiladi (o'z joriy sessiyasini ham)."""
-    record = await cache.get(device_key(user.telegram_id, session_id))
+    record = await cache.get(device_key(_caller_id(request, user), session_id))
     if not isinstance(record, dict):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "session_not_found", "message": "Sessiya topilmadi"},
         )
     await cache.set(revocation_key(session_id), True, ttl=settings.security.access_token_ttl)
-    await cache.delete(device_key(user.telegram_id, session_id))
-    if await active_session_id(cache, user.telegram_id) == session_id:
-        await cache.delete(active_session_key(user.telegram_id))
+    await cache.delete(device_key(_caller_id(request, user), session_id))
+    if await active_session_id(cache, _caller_id(request, user)) == session_id:
+        await cache.delete(active_session_key(_caller_id(request, user)))
     return MessageResponse(ok=True, message="Sessiya yopildi")
 
 

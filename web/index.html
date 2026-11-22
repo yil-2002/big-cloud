@@ -4334,6 +4334,8 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
   "Cheksiz": "Безлимит",
   "Ha": "Да",
   "Chiqish": "Выйти",
+  "Boshqa profilga o'tish": "Сменить профиль",
+  "Boshqa profil login va parolini kiriting": "Введите логин и пароль другого профиля",
   "Til": "Язык",
   "O'zgartirish": "Изменить",
   "Katta fayl xizmati vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring.": "Служба больших файлов временно недоступна. Повторите попытку позже."
@@ -4714,6 +4716,8 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
   "Cheksiz": "Unlimited",
   "Ha": "Yes",
   "Chiqish": "Log out",
+  "Boshqa profilga o'tish": "Switch profile",
+  "Boshqa profil login va parolini kiriting": "Enter the login and password of another profile",
   "Til": "Language",
   "O'zgartirish": "Change",
   "Katta fayl xizmati vaqtincha ishlamayapti. Birozdan so'ng qayta urinib ko'ring.": "Large-file streaming is temporarily unavailable. Please try again later."
@@ -8520,6 +8524,15 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
       actions.appendChild(el("button", {
         class: "btn", type: "button", html: svgIcon("trash", 16) + "<span>Savat</span>",
         onclick: openTrashSheet
+      }));
+      // Ko'p profilli sessiyalar: boshqa profil login/paroli bilan kirish.
+      // Joriy sessiya yangi profilga MUVAFFAQIYATLI kirilgandagina yakunlanadi.
+      actions.appendChild(el("button", {
+        class: "btn", type: "button", html: svgIcon("user", 16) + "<span>Boshqa profilga o'tish</span>",
+        onclick: function () {
+          toast("Boshqa profil login va parolini kiriting");
+          showView("auth");
+        }
       }));
       actions.appendChild(el("button", {
         class: "btn btn-danger", type: "button", text: "Chiqish",
