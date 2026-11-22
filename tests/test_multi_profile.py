@@ -75,3 +75,30 @@ async def test_extra_profile_over_api_is_isolated(client, settings, storage, use
     assert (await auth.login("alisher", "parol123", telegram_id=a_id)).ok
     names = {i["name"] for i in client.get("/api/v1/files", headers=_auth(token)).json()["items"]}
     assert names == {"asosiy.pdf"}
+
+
+async def test_profiles_endpoint_lists_and_marks_active(client, settings, storage, user) -> None:
+    """``GET /auth/profiles``: profillar, faol belgisi; parol hech qachon qaytmaydi."""
+    auth = AuthService(storage.session, storage=storage, settings=settings)
+    a_id = user.telegram_id
+    assert (await auth.register(a_id, "alisher", "parol123")).ok
+    assert (await auth.register(a_id, "ish_profil", "parol789")).ok
+    token = await _token(settings, a_id, "mp-p")
+
+    response = client.get("/api/v1/auth/profiles", headers=_auth(token))
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["current"] == "ish_profil"
+    assert {(i["login"], i["active"], i["extra"]) for i in data["items"]} == {
+        ("alisher", False, False),
+        ("ish_profil", True, True),
+    }
+    assert "parol" not in response.text and "password" not in response.text
+
+    # Sessiyasi boshqa joyda yakunlangan foydalanuvchi ham ro'yxatni ko'radi
+    # (qayta kirish uchun profil tanlash), lekin hech biri "faol" emas.
+    await storage.get_or_create_user(telegram_id=888, first_name="Bobur")
+    assert (await auth.login("ish_profil", "parol789", telegram_id=888)).ok
+    kicked = client.get("/api/v1/auth/profiles", headers=_auth(token)).json()
+    assert kicked["current"] is None
+    assert not any(item["active"] for item in kicked["items"])

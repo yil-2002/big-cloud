@@ -24,6 +24,8 @@ from api.schemas import (
     AuthResponse,
     LoginRequest,
     MessageResponse,
+    ProfileOut,
+    ProfilesOut,
     RegisterRequest,
     SessionDeviceOut,
     SessionDevicesOut,
@@ -383,6 +385,39 @@ async def login_account(
         expires_in=settings.security.access_token_ttl,
         user=serialize_user(result.user, settings),
     )
+
+
+@router.get(
+    "/profiles",
+    response_model=ProfilesOut,
+    summary="Profillar ro'yxati (ko'p profilli sessiyalar)",
+)
+async def list_profiles(
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+    storage: Annotated[StorageService, Depends(get_storage_service)],
+) -> ProfilesOut:
+    """Chaqiruvchining profillari va qaysi biri faol.
+
+    ``/auth/*`` darvozadan ozod: sessiyasi boshqa joyda yakunlangan foydalanuvchi
+    ham ro'yxatni ko'rib, profilini tanlab qayta kira oladi. O'tish faqat
+    ``POST /auth/login`` (login + parol) orqali.
+    """
+    from services.profiles import ProfileService
+
+    caller = _caller_id(request, user)
+    signed_in = bool(user.is_signed_in)
+    profiles = await ProfileService(storage.session).list_profiles(caller)
+    items = [
+        ProfileOut(
+            login=profile.login,
+            active=signed_in and profile.telegram_id == user.telegram_id,
+            extra=profile.is_extra_profile,
+        )
+        for profile in profiles
+        if profile.login
+    ]
+    return ProfilesOut(items=items, current=user.login if signed_in else None)
 
 
 @router.get(

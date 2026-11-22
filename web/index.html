@@ -2937,6 +2937,36 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
   #player.is-audio::before { animation: none; }
   #player .audio-art, #viewer .viewer-thumb { transition: none; }
 }
+
+/* --- Profillar (ko'p profilli sessiyalar) -------------------------------- */
+.profile-row {
+  display: flex; align-items: center; gap: var(--sp-3); width: 100%;
+  padding: 10px 12px; border-radius: var(--r-lg);
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text); text-align: left;
+  transition: transform 140ms var(--ease), background 140ms var(--ease);
+}
+.profile-row:not(:disabled):active { transform: scale(0.98); background: var(--surface-3); }
+.profile-row.is-active { border-color: var(--brand); cursor: default; }
+.profile-row:disabled { opacity: 1; }
+.profile-avatar {
+  flex: none; width: 38px; height: 38px; border-radius: 50%;
+  display: grid; place-items: center; font-weight: 800;
+  background: var(--surface-3); color: var(--text);
+}
+.profile-row.is-active .profile-avatar { background: var(--brand); color: var(--on-brand); }
+.profile-text { display: flex; flex-direction: column; min-width: 0; }
+.profile-login { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-sub { font-size: var(--fs-xs); color: var(--text-muted); }
+.profile-badge, .profile-go {
+  flex: none; font-size: var(--fs-xs); font-weight: 700;
+  padding: 4px 10px; border-radius: var(--r-pill);
+}
+.profile-badge { background: var(--brand); color: var(--on-brand); }
+.profile-go { background: var(--surface-3); color: var(--text); }
+#profilesBody { gap: var(--sp-2); }
+.auth-profiles { margin-top: var(--sp-3); }
+.auth-profile-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-2); }
 </style>
 </head>
 
@@ -3068,6 +3098,11 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
   <!-- HISOB KO'RINISHI                                              -->
   <!-- ============================================================== -->
   <section id="viewAccount" class="view hidden">
+    <!-- Ko'p profilli sessiyalar: profillar ro'yxati, o'tish, yangi profil -->
+    <div class="panel" id="profilesPanel">
+      <div class="panel-title"><span data-icon="user" data-icon-size="15"></span> Profillar</div>
+      <div id="profilesBody" class="col"></div>
+    </div>
     <div class="panel">
       <div class="panel-title"><span data-icon="user" data-icon-size="15"></span> Hisob</div>
       <div id="accountBody"></div>
@@ -3134,6 +3169,8 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
       </form>
 
       <div id="authTgHint" class="hint" style="margin-top:var(--sp-4)"></div>
+      <!-- Tez tanlash: shu Telegram akkauntidagi profillar (login o'zi to'ladi) -->
+      <div id="authProfiles" class="auth-profiles hidden" aria-label="Profillaringiz"></div>
     </div>
   </section>
 </main>
@@ -3620,6 +3657,7 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
     storage: '<ellipse cx="12" cy="6" rx="7.5" ry="3"/><path d="M4.5 6v12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6"/><path d="M4.5 12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3"/>',
     chart: '<path d="M4.5 20.5V12M9.5 20.5V6M14.5 20.5v-5M19.5 20.5V9"/>',
     palette: '<path d="M12 3.5a8.5 8.5 0 0 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.6-1.6-1.7-1.6-3 0-.9.7-1.6 1.6-1.6h1.7a4.9 4.9 0 0 0 4.9-4.9c0-3.2-3.8-5.8-8.4-5.8z"/><circle cx="7.5" cy="10" r="1"/><circle cx="11" cy="7.6" r="1"/><circle cx="15.5" cy="9" r="1"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
     user: '<circle cx="12" cy="8" r="3.8"/><path d="M4.5 20.5c1.4-3.4 4.1-5.1 7.5-5.1s6.1 1.7 7.5 5.1"/>',
     idcard: '<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><circle cx="9" cy="11" r="2.2"/><path d="M5.8 16c.8-1.6 1.9-2.4 3.2-2.4s2.4.8 3.2 2.4"/><path d="M15 10h4M15 13.5h3"/>',
     house: '<path d="M4.5 10.5 12 4l7.5 6.5"/><path d="M6 9.8V20h12V9.8"/><path d="M10 20v-5.5h4V20"/>',
@@ -5245,11 +5283,25 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
       var detail = (payload && (payload.detail || payload.error)) || {};
       if (typeof detail === "string") detail = { message: detail };
       detail.message = localizedError(detail.code, detail.message, response.status);
-      if (response.status === 401) {
+      // ``/auth/login`` va ``/auth/register`` dagi 401 — "parol noto'g'ri",
+      // sessiya tugagani EMAS: profilga o'tishda xato parol joriy sessiyani
+      // yopmasligi kerak (ilgari foydalanuvchi o'z profilidan ham chiqib ketardi).
+      var credentialCheck = path.indexOf("/auth/login") === 0 || path.indexOf("/auth/register") === 0;
+      if (response.status === 401 && !credentialCheck) {
         // Sessiya tugagan: token'ni tashlab, kirish ekraniga qaytamiz.
         state.token = null;
         store(STORE.token, null);
         showView("auth", { silent: true });
+      } else if (response.status === 403 && detail.code === "not_authenticated" &&
+                 path.indexOf("/auth/") !== 0) {
+        // Profil sessiyasi boshqa joyda ochilgan (yoki chiqilgan): token o'z
+        // kuchida (Telegram identifikatori), faqat qayta kirish kerak.
+        if (state.user) state.user.is_authenticated = false;
+        if (!state.kickNotified) {
+          state.kickNotified = true;
+          toast("Sessiya boshqa joyda ochildi — qayta kiring.", "error", 4200, "lock");
+        }
+        if (state.view !== "auth") showView("auth", { silent: true });
       }
       var requestError = apiError(
         detail.message || ("HTTP " + response.status), detail.code, response.status
@@ -5518,6 +5570,7 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
     if (name === "shares") loadShares();
     if (name === "stats") loadStats();
     if (name === "account") renderAccount();
+    if (name === "auth") renderAuthProfiles();
     window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
   }
 
@@ -8484,7 +8537,170 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
     });
   }
 
+  /* ----------------------------------------------------------------------
+     PROFILLAR (ko'p profilli sessiyalar)
+     ----------------------------------------------------------------------
+     * Bitta Telegram akkauntda bir nechta profil (har birida alohida fayllar).
+     * Boshqa profilga o'tish — faqat parol bilan; muvaffaqiyatli kirilganda
+       oldingi sessiya serverda yakunlanadi (POST /auth/login).
+     * Yangi profil — POST /auth/register (hisob bor bo'lsa server alohida
+       profil ochadi va darhol unga o'tkazadi). */
+  async function fetchProfiles() {
+    try {
+      var data = await api("/auth/profiles");
+      return (data && data.items) || [];
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function profileInitial(login) {
+    return String(login || "?").charAt(0).toUpperCase();
+  }
+
+  async function renderProfiles() {
+    var host = $("profilesBody");
+    if (!host) return;
+    host.innerHTML = '<div class="hint">Yuklanmoqda…</div>';
+    var items = await fetchProfiles();
+    host.innerHTML = "";
+    if (items === null) {
+      host.appendChild(el("div", { class: "hint", text: "Profillarni yuklab bo'lmadi." }));
+      return;
+    }
+    items.forEach(function (profile) {
+      var row = el("button", {
+        class: "profile-row" + (profile.active ? " is-active" : ""),
+        type: "button",
+        "aria-label": profile.active
+          ? profile.login + " — faol profil"
+          : profile.login + " profiliga o'tish",
+        onclick: function () { if (!profile.active) switchProfile(profile.login); }
+      }, [
+        el("span", { class: "profile-avatar", text: profileInitial(profile.login) }),
+        el("span", { class: "grow profile-text" }, [
+          el("span", { class: "profile-login", text: profile.login }),
+          el("span", { class: "profile-sub", text: profile.active ? "Faol profil" : (profile.extra ? "Qo'shimcha profil" : "Asosiy profil") })
+        ]),
+        profile.active
+          ? el("span", { class: "profile-badge", text: "Faol" })
+          : el("span", { class: "profile-go", text: "O'tish" })
+      ]);
+      if (profile.active) row.disabled = true;
+      host.appendChild(row);
+    });
+    host.appendChild(el("button", {
+      class: "btn btn-block", type: "button",
+      html: svgIcon("plus", 16) + "<span>Yangi profil ochish</span>",
+      onclick: createProfile
+    }));
+    host.appendChild(el("div", {
+      class: "hint",
+      text: "Har bir profilning fayllari alohida. Profilga kirilganda oldingi sessiya yakunlanadi."
+    }));
+  }
+
+  async function switchProfile(login) {
+    var result = await openSheet({
+      title: "«" + login + "» profiliga o'tish",
+      subtitle: "Parolni kiriting. Joriy sessiya yakunlanadi.",
+      fields: [{
+        name: "password", label: "Parol", type: "password",
+        autocomplete: "current-password", placeholder: "••••••••"
+      }],
+      actions: [
+        { label: "Bekor qilish", value: false },
+        { label: "O'tish", kind: "primary", value: "go" }
+      ]
+    });
+    if (!result.ok || result.action !== "go") return;
+    if (!result.values.password) { toast("Parolni kiriting.", "error"); return; }
+    await completeProfileAuth("login", { login: login, password: result.values.password },
+      "«" + login + "» profiliga o'tdingiz");
+  }
+
+  async function createProfile() {
+    var result = await openSheet({
+      title: "Yangi profil",
+      subtitle: "Alohida fayl va papkalar bilan yangi profil. Joriy sessiya yakunlanadi.",
+      fields: [
+        { name: "login", label: "Login", placeholder: "masalan: ish_profil", autocomplete: "username",
+          maxlength: 32, hint: "3–32 belgi: harf, raqam, <code>_</code> va <code>.</code>" },
+        { name: "password", label: "Parol", type: "password", autocomplete: "new-password",
+          placeholder: "kamida 6 belgi" }
+      ],
+      actions: [
+        { label: "Bekor qilish", value: false },
+        { label: "Yaratish", kind: "primary", value: "create" }
+      ]
+    });
+    if (!result.ok || result.action !== "create") return;
+    var login = result.values.login, password = result.values.password;
+    if (!/^[A-Za-z0-9_.]{3,32}$/.test(login)) {
+      toast("Login 3–32 belgi: faqat lotin harflari, raqam, _ va .", "error", 4200);
+      return;
+    }
+    if (!password || password.length < 6) { toast("Parol kamida 6 belgidan iborat bo'lsin.", "error"); return; }
+    await completeProfileAuth("register", { login: login, password: password }, "Yangi profil yaratildi");
+  }
+
+  /** Profilga kirish/yaratish: sessiya, holatni tozalash va yangi profil fayllari. */
+  async function completeProfileAuth(mode, body, okText) {
+    try {
+      var response = await api("/auth/" + mode, { method: "POST", body: JSON.stringify(body) });
+      setSession(response);
+      resetProfileState();
+      haptic("success");
+      toast(okText, null, null, "check");
+      await afterAuth();
+    } catch (error) {
+      haptic("error");
+      toast(authErrorMessage(error, mode), "error", 4200);
+    }
+  }
+
+  /** Boshqa profilga o'tganda oldingi profil ma'lumotlari ekranda qolmasin. */
+  function resetProfileState() {
+    state.items = [];
+    state.shares = [];
+    state.stats = null;
+    state.folderId = null;
+    state.folderStack = [];
+    state.folders = [];
+    if (state.selected && state.selected.clear) state.selected.clear();
+    state.kickNotified = false;
+  }
+
+  /** Login ekranida: shu Telegram'dagi profillar — bosilsa login to'ladi. */
+  async function renderAuthProfiles() {
+    var host = $("authProfiles");
+    if (!host) return;
+    host.innerHTML = "";
+    host.classList.add("hidden");
+    if (!state.token) return;
+    var items = await fetchProfiles();
+    if (!items || !items.length) return;
+    // Profillari bor foydalanuvchiga ro'yxatdan o'tish emas, KIRISH kerak.
+    if (!$("authTabLogin").classList.contains("is-active")) $("authTabLogin").click();
+    host.appendChild(el("div", { class: "hint", text: "Profillaringiz:" }));
+    var chips = el("div", { class: "auth-profile-chips" });
+    items.forEach(function (profile) {
+      chips.appendChild(el("button", {
+        class: "chip", type: "button", text: profile.login,
+        onclick: function () {
+          $("authTabLogin").click();
+          $("authLogin").value = profile.login;
+          $("authPassword").value = "";
+          $("authPassword").focus();
+        }
+      }));
+    });
+    host.appendChild(chips);
+    host.classList.remove("hidden");
+  }
+
   function renderAccount() {
+    renderProfiles();
     var host = $("accountBody");
     host.innerHTML = "";
     var user = state.user;
@@ -8494,7 +8710,11 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
     }
     var rows = [
       ["user", "Ism", user.full_name || user.first_name || "—"],
-      ["idcard", "Telegram ID", String(user.telegram_id)],
+      // Qo'shimcha profilning ichki ID si sintetik — haqiqiy Telegram ID ni ko'rsatamiz.
+      ["idcard", "Telegram ID", String(
+        (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) ||
+        (user.telegram_id > 0 ? user.telegram_id : "—")
+      )],
       ["key", "Login", user.login || "hisob bog'lanmagan"],
       ["check", "Hisob holati", user.is_authenticated ? "Tasdiqlangan" : "Tasdiqlanmagan"],
       ["storage", "Ishlatilgan", humanSize(user.storage_used)],
@@ -8524,15 +8744,6 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
       actions.appendChild(el("button", {
         class: "btn", type: "button", html: svgIcon("trash", 16) + "<span>Savat</span>",
         onclick: openTrashSheet
-      }));
-      // Ko'p profilli sessiyalar: boshqa profil login/paroli bilan kirish.
-      // Joriy sessiya yangi profilga MUVAFFAQIYATLI kirilgandagina yakunlanadi.
-      actions.appendChild(el("button", {
-        class: "btn", type: "button", html: svgIcon("user", 16) + "<span>Boshqa profilga o'tish</span>",
-        onclick: function () {
-          toast("Boshqa profil login va parolini kiriting");
-          showView("auth");
-        }
       }));
       actions.appendChild(el("button", {
         class: "btn btn-danger", type: "button", text: "Chiqish",

@@ -428,6 +428,25 @@ class SessionDevicesOut(_Model):
     single_session: bool = True
 
 
+class ProfileOut(_Model):
+    """Bitta profil (``GET /auth/profiles``). Parol hech qachon qaytarilmaydi."""
+
+    login: str
+    #: Hozir shu Telegram foydalanuvchisi shu profilda.
+    active: bool = False
+    #: ``/register`` bilan ochilgan qo'shimcha profil.
+    extra: bool = False
+
+
+class ProfilesOut(_Model):
+    """Ko'p profilli sessiyalar: profillar ro'yxati va joriy profil."""
+
+    items: list[ProfileOut] = []
+    current: str | None = None
+    #: Siyosat: profilga kirish oldingi sessiyani yakunlaydi.
+    single_session: bool = True
+
+
 # Forward references used by AuthResponse / FileOut.
 AuthResponse.model_rebuild()
 FileOut.model_rebuild()

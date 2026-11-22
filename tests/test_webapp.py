@@ -394,6 +394,8 @@ def test_api_paths_used_by_frontend_exist(client: Any) -> None:
         ("GET", "/api/v1/auth/me"),
         ("PATCH", "/api/v1/auth/me"),
         ("GET", "/api/v1/auth/me/stats"),
+        # Ko'p profilli sessiyalar: profillar ro'yxati (Hisob -> Profillar)
+        ("GET", "/api/v1/auth/profiles"),
         ("GET", "/api/v1/files"),
         ("GET", "/api/v1/files/some-id/stream"),
         ("POST", "/api/v1/files/some-id/pin"),
