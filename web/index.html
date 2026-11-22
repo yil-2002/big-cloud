@@ -9346,8 +9346,13 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
      * Telefonda past aniqlikda chiziladi (scaleMobile) — bulut baribir yumshoq,
        GPU yuki ~10 barobar kam. Pleer/rasm ko'ruvchi ochiq bo'lsa — pauza.
      * Yuklanmasa yoki WebGL yo'q bo'lsa — yuqoridagi 3D shader zaxira qoladi. */
-  /* `/static` har doim ulangan (api/app.py) — mount_path qanday bo'lmasin ishlaydi. */
-  var VANTA_FILES = ["/static/vendor/three.r134.min.js", "/static/vendor/vanta.clouds.min.js", "/static/vendor/vanta.clouds2.min.js"];
+  /* `/static` har doim ulangan (api/app.py) — mount_path qanday bo'lmasin ishlaydi.
+     Faqat joriy mavzuga kerakli effekt yuklanadi (yorug'da clouds2/noise yo'q). */
+  var VANTA_BASE = "/static/vendor/three.r134.min.js";
+  var VANTA_EFFECT_FILE = {
+    CLOUDS: "/static/vendor/vanta.clouds.min.js",
+    CLOUDS2: "/static/vendor/vanta.clouds2.min.js"
+  };
   var VANTA_THEMES = {
     light: {
       effect: "CLOUDS",
@@ -9376,24 +9381,23 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
   };
   var vanta = { el: null, effect: null, theme: "", loading: null, paused: false };
 
+  var scriptCache = {};
   function loadScript(src) {
-    return new Promise(function (resolve, reject) {
+    if (scriptCache[src]) return scriptCache[src];
+    return (scriptCache[src] = new Promise(function (resolve, reject) {
       var tag = document.createElement("script");
       tag.src = src;
       tag.async = false;               /* tartib muhim: avval three, keyin vanta */
       tag.onload = resolve;
-      tag.onerror = function () { reject(new Error("load failed: " + src)); };
+      tag.onerror = function () { delete scriptCache[src]; reject(new Error("load failed: " + src)); };
       document.head.appendChild(tag);
-    });
+    }));
   }
 
-  function loadVanta() {
-    if (!vanta.loading) {
-      vanta.loading = VANTA_FILES.reduce(function (chain, src) {
-        return chain.then(function () { return loadScript(src); });
-      }, Promise.resolve());
-    }
-    return vanta.loading;
+  /** three.js + joriy mavzu effekti (keyingi mavzu almashishida faqat effekt fayli). */
+  function loadVanta(mode) {
+    var effect = VANTA_THEMES[mode].effect;
+    return loadScript(VANTA_BASE).then(function () { return loadScript(VANTA_EFFECT_FILE[effect]); });
   }
 
   function overlayOpen() {
@@ -9418,12 +9422,16 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
   }
 
   function vantaApply() {
-    if (design() !== "v2" || !window.VANTA) return;
+    if (design() !== "v2") return;
     var mode = theme();
     if (vanta.effect && vanta.theme === mode) return;
     var cfg = VANTA_THEMES[mode];
-    var factory = window.VANTA[cfg.effect];
-    if (typeof factory !== "function") return;
+    var factory = window.VANTA && window.VANTA[cfg.effect];
+    if (typeof factory !== "function") {
+      /* Bu mavzuning effekti hali yuklanmagan (masalan mavzu almashdi). */
+      loadVanta(mode).then(vantaApply).catch(vantaFallback);
+      return;
+    }
     if (vanta.effect) { try { vanta.effect.destroy(); } catch (e) {} vanta.effect = null; }
     try {
       vanta.effect = factory(Object.assign({
@@ -9443,8 +9451,22 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
       if (overlayOpen()) vantaPause(true);
     } catch (e) {
       vanta.effect = null;
-      root.classList.remove("has-vanta");
+      vantaFallback();
     }
+  }
+
+  /** Vanta ishlamadi (WebGL yo'q / fayl yuklanmadi) — 3D shader zaxira. */
+  function vantaFallback() {
+    root.classList.remove("has-vanta");
+    initSpiral();
+    start();
+  }
+
+  function webglAvailable() {
+    try {
+      var probe = document.createElement("canvas");
+      return Boolean(probe.getContext("webgl2") || probe.getContext("webgl"));
+    } catch (e) { return false; }
   }
 
   function initVanta() {
@@ -9453,11 +9475,9 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
     vanta.el.id = "vanta-bg";
     vanta.el.setAttribute("aria-hidden", "true");
     document.body.insertBefore(vanta.el, document.body.firstChild);
-    loadVanta().then(vantaApply).catch(function () {
-      root.classList.remove("has-vanta");   /* shader zaxira ko'rinib qoladi */
-    });
+    loadVanta(theme()).then(vantaApply).catch(vantaFallback);
     /* Mavzu almashsa — mos effekt; pleer/rasm ochilsa — pauza. */
-    new MutationObserver(function () { if (window.VANTA) vantaApply(); })
+    new MutationObserver(function () { if (vanta.el) vantaApply(); })
       .observe(root, { attributes: true, attributeFilter: ["data-theme", "data-design"] });
     var watch = new MutationObserver(function () { vantaPause(overlayOpen()); });
     ["playerBackdrop", "viewerBackdrop"].forEach(function (id) {
@@ -9467,11 +9487,20 @@ html[data-design="v2"] .auth-tabs button.is-active { background: var(--brand); c
   }
 
   function boot() {
-    if (design() === "v2") initSpiral();
     syncThemeColor();
-    /* Bulutlar birinchi chizishdan keyin yuklanadi — ochilish sekinlashmaydi. */
-    var later = window.requestIdleCallback || function (fn) { return setTimeout(fn, 400); };
-    later(initVanta);
+    if (design() !== "v2") return;
+    /* Bulutlar ishlay oladigan qurilmada eski 3D shader UMUMAN chizilmaydi:
+       ilgari avval globus ko'rinib, keyin bulutlarga "sakrardi". Endi toza fon
+       turadi va bulutlar yumshoq (opacity) paydo bo'ladi. Shader — faqat zaxira. */
+    if (reduced || !webglAvailable()) { initSpiral(); return; }
+    /* Fayllar ilovaning o'zi yuklanib bo'lgach (load) olinadi — ro'yxat va API
+       so'rovlari bilan tarmoq uchun raqobatlashmaydi. */
+    var go = function () {
+      var later = window.requestIdleCallback || function (fn) { return setTimeout(fn, 200); };
+      later(initVanta, { timeout: 1500 });
+    };
+    if (document.readyState === "complete") go();
+    else window.addEventListener("load", go, { once: true });
   }
 
   if (document.readyState === "loading") {

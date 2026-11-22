@@ -147,7 +147,7 @@ start_app() {
 stop_app() {
   if [ -n "$APP_PID" ] && kill -0 "$APP_PID" 2>/dev/null; then
     kill -INT "$APP_PID" 2>/dev/null
-    for _ in $(seq 1 25); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 1; done
+    for _ in $(seq 1 10); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 1; done
     kill -9 "$APP_PID" 2>/dev/null || true
   fi
   APP_PID=""
@@ -220,11 +220,17 @@ restart_tunnel() {
 }
 
 # --- 4. To'xtatish ------------------------------------------------------------
+SHUTTING_DOWN=0
 shutdown() {
+  [ "$SHUTTING_DOWN" = 1 ] && return 0
+  SHUTTING_DOWN=1
   log "To'xtatilmoqda…"
+  # MUHIM tartib: avval ZAXIRA. GitHub "Cancel"da SIGINT dan ~7 s keyin
+  # jarayonni o'ldiradi — ilova to'xtashini kutib o'tirsak, nusxa yo'qolardi.
+  # SQLite backup API ilova ishlab turganda ham izchil nusxa oladi.
+  db_backup
   register_origin '{"origin":null}' || true
   stop_app
-  db_backup            # ilova to'xtagach — eng so'nggi holat kanalga
   [ -n "$CF_PID" ] && kill "$CF_PID" 2>/dev/null || true
 }
 trap 'shutdown; exit 0' INT TERM
@@ -272,7 +278,9 @@ log "Bot ishlayapti. Tugash vaqti: $(date -u -d "@$deadline" +%H:%M) UTC"
 
 flush_app_log
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  sleep 60
+  # `sleep` fonda + `wait`: signal kelsa trap DARHOL ishlaydi (oddiy `sleep 60`
+  # paytida bash trap'ni uyqu tugaguncha kechiktiradi).
+  sleep 60 & wait $!
   flush_app_log
   # Ilova yiqilgan bo'lsa — qayta ishga tushirish (ko'pi bilan 5 marta).
   if ! kill -0 "$APP_PID" 2>/dev/null; then

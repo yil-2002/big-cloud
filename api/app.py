@@ -180,6 +180,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ],
     )
     application.add_middleware(_RequestTimingMiddleware)
+    # Siqish (gzip): Mini App HTML ~436 KB -> ~112 KB, three.js 615 -> 151 KB.
+    # Tunnel orqali birinchi ochilish shu tufayli bir necha barobar tezlashadi.
+    application.add_middleware(_SelectiveGZipMiddleware)
+    application.add_middleware(_VendorCacheMiddleware)
 
     # --- xato konvertlari -----------------------------------------------------
     @application.exception_handler(DomainError)
@@ -326,6 +330,56 @@ def _mount_web(application: FastAPI, settings: Settings) -> None:
         "/static", StaticFiles(directory=str(static_dir), html=False), name="static"
     )
     logger.info("Mini App mounted from %s (mount_path=%s)", static_dir, mount_path or "/")
+
+
+class _SelectiveGZipMiddleware:
+    """Faqat matnli javoblarni siqish; media oqimiga TEGMASLIK.
+
+    Nega oddiy ``GZipMiddleware`` emas: ``/stream`` va ``/download`` video/audio
+    ni ``Range`` (206) bilan beradi — siqilsa ``Content-Length``/``Content-Range``
+    buziladi va pleerda seek ishlamaydi. Shuning uchun media yo'llari va
+    ``Range`` so'rovlari to'g'ridan-to'g'ri o'tkaziladi.
+    """
+
+    _SKIP_PARTS = ("/stream", "/download", "/thumb", "/upload")
+
+    def __init__(self, app: Any) -> None:
+        from starlette.middleware.gzip import GZipMiddleware
+
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=1024, compresslevel=6)
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        headers = dict(scope.get("headers") or [])
+        if b"range" in headers or any(part in path for part in self._SKIP_PARTS):
+            await self.app(scope, receive, send)
+            return
+        await self.gzip(scope, receive, send)
+
+
+class _VendorCacheMiddleware:
+    """``/static/vendor/*`` uchun uzoq kesh (fayl nomlari versiyali: three.r134 …)."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or not scope.get("path", "").startswith("/static/vendor/"):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_cache(message: Any) -> None:
+            if message.get("type") == "http.response.start" and message.get("status") == 200:
+                headers = [h for h in message.get("headers", []) if h[0].lower() != b"cache-control"]
+                headers.append((b"cache-control", b"public, max-age=604800"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_cache)
 
 
 class _RequestTimingMiddleware:
